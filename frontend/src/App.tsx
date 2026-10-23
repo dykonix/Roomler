@@ -44,34 +44,38 @@ type ApiProperty = {
 }
 
 
+type AmenityScope = 'property' | 'floor' | 'room'
+type AmenityOption = { attribute_key: string; display_name: string; scope: AmenityScope }
+type AmenityValue = { key: string; value: 'yes' | 'no' | 'unknown' }
 type FormOptions = {
   cities: { id: string; name: string; state_name: string }[]
   localities: { id: string; name: string; city_id: string; city_name: string }[]
-  owners: { id: string; name: string; data_label: string }[]
+  owners: { id: string; name: string; contact_phone: string | null; contact_email: string | null; data_label: string }[]
+  amenities: AmenityOption[]
 }
 
 type ChargeForm = { name: string; amount: string; basis: 'one_time' | 'monthly' | 'per_unit' | 'per_use' | 'other'; mandatory: boolean; description: string }
 type OfferForm = { amount: string; foodOption: 'included' | 'excluded' | 'unknown'; status: 'active' | 'inactive' | 'unknown' }
-type RoomForm = { label: string; type: 'single' | 'shared'; maxOccupants: string; status: 'available' | 'occupied' | 'reserved' | 'unavailable' | 'unknown'; furnishingStatus: 'furnished' | 'semi_furnished' | 'unfurnished' | ''; attachedBathroom: 'yes' | 'no' | 'unknown'; wifiAvailableInRoom: 'yes' | 'no' | 'unknown'; wifiSpeedMbps: string; notes: string; offers: OfferForm[]; charges: ChargeForm[] }
-type FloorForm = { number: string; label: string; notes: string; rooms: RoomForm[] }
+type RoomForm = { label: string; type: 'single' | 'shared'; maxOccupants: string; totalBeds: string; availableBeds: string; availabilityLastConfirmedAt: string; status: 'available' | 'occupied' | 'reserved' | 'unavailable' | 'unknown'; furnishingStatus: 'furnished' | 'semi_furnished' | 'unfurnished' | ''; attachedBathroom: 'yes' | 'no' | 'unknown'; wifiAvailableInRoom: 'yes' | 'no' | 'unknown'; wifiSpeedMbps: string; notes: string; amenities: AmenityValue[]; offers: OfferForm[]; charges: ChargeForm[] }
+type FloorForm = { number: string; label: string; notes: string; amenities: AmenityValue[]; rooms: RoomForm[] }
 type PropertyFormValues = {
   title: string; description: string; cityId: string; localityId: string; ownerId: string; propertyType: 'PG' | 'Flat';
   address: string; googleMapsUrl: string; latitude: string; longitude: string; coordinateSource: 'manual' | 'owner_submitted' | 'google_places' | 'openstreetmap' | 'other';
   genderEligibility: 'Boys' | 'Girls' | 'Unisex' | 'unknown'; couplesAllowed: 'yes' | 'no' | 'unknown'; coEdRoomsAllowed: 'yes' | 'no' | 'unknown'; cookingAllowed: 'yes' | 'no' | 'unknown'; houseRulesNotes: string;
   securityDepositBasis: 'two_weeks_rent' | 'one_month_rent' | 'two_months_rent' | 'three_months_rent' | 'four_months_rent' | 'fixed_amount' | 'not_required' | 'unknown'; securityDepositAmount: string; securityDepositRefundPolicy: 'fully_refundable_no_deductions' | 'refundable_with_deductions' | 'unknown'; securityDepositDeductionNotes: string;
   noticePeriodMonths: string; electricityBillingMode: 'included_in_rent' | 'metered' | 'unknown'; electricityRatePerUnit: string; fourWheelerParkingSpaces: string; twoWheelerParkingSpaces: string;
-  floors: FloorForm[]; images: { url: string; label: 'exterior' | 'bedroom' | 'kitchen' | 'bathroom' | 'living_area' | 'other'; altText: string; isCover: boolean }[];
+  propertyAmenities: AmenityValue[]; floors: FloorForm[]; images: { key: string; url: string; previewUrl: string; fileName: string; label: 'exterior' | 'bedroom' | 'kitchen' | 'bathroom' | 'living_area' | 'other'; altText: string; isCover: boolean }[];
 }
 
 const newCharge = (): ChargeForm => ({ name: '', amount: '', basis: 'monthly', mandatory: false, description: '' })
 const newOffer = (): OfferForm => ({ amount: '', foodOption: 'unknown', status: 'active' })
-const newRoom = (index = 1): RoomForm => ({ label: `Room ${index}`, type: 'shared', maxOccupants: '2', status: 'unknown', furnishingStatus: '', attachedBathroom: 'unknown', wifiAvailableInRoom: 'unknown', wifiSpeedMbps: '', notes: '', offers: [newOffer()], charges: [] })
+const newRoom = (index = 1): RoomForm => ({ label: `Room ${index}`, type: 'shared', maxOccupants: '2', totalBeds: '2', availableBeds: '', availabilityLastConfirmedAt: '', status: 'unknown', furnishingStatus: '', attachedBathroom: 'unknown', wifiAvailableInRoom: 'unknown', wifiSpeedMbps: '', notes: '', amenities: [], offers: [newOffer()], charges: [] })
 const initialFormValues: PropertyFormValues = {
   title: '', description: '', cityId: '', localityId: '', ownerId: '', propertyType: 'PG', address: '', googleMapsUrl: '', latitude: '', longitude: '', coordinateSource: 'owner_submitted',
   genderEligibility: 'unknown', couplesAllowed: 'unknown', coEdRoomsAllowed: 'unknown', cookingAllowed: 'unknown', houseRulesNotes: '',
   securityDepositBasis: 'unknown', securityDepositAmount: '', securityDepositRefundPolicy: 'unknown', securityDepositDeductionNotes: '', noticePeriodMonths: '',
   electricityBillingMode: 'unknown', electricityRatePerUnit: '', fourWheelerParkingSpaces: '', twoWheelerParkingSpaces: '',
-  floors: [{ number: '0', label: 'Ground floor', notes: '', rooms: [newRoom(1)] }], images: [],
+  propertyAmenities: [], floors: [{ number: '0', label: 'Ground floor', notes: '', amenities: [], rooms: [newRoom(1)] }], images: [],
 }
 
 function mapApiProperty(property: ApiProperty): Property {
@@ -136,12 +140,18 @@ function App() {
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [formOptions, setFormOptions] = useState<FormOptions>({ cities: [], localities: [], owners: [] })
+  const [formOptions, setFormOptions] = useState<FormOptions>({
+  cities: [],
+  localities: [],
+  owners: [],
+  amenities: [],
+})
   const [formLoading, setFormLoading] = useState(false)
   const [savingProperty, setSavingProperty] = useState(false)
   const [formError, setFormError] = useState('')
   const [formValues, setFormValues] = useState<PropertyFormValues>(initialFormValues)
   const [reviewMode, setReviewMode] = useState(false)
+  const [uploadingPhotos, setUploadingPhotos] = useState(false)
 
   const filteredProperties = useMemo(() => properties.filter((property) => {
     const search = query.trim().toLowerCase()
@@ -161,11 +171,56 @@ function App() {
     try {
       const response = await fetch('http://localhost:3001/api/admin/form-options')
       if (!response.ok) throw new Error(`Could not load form options (${response.status}).`)
-      setFormOptions(await response.json())
+      const options = await response.json() as FormOptions
+      setFormOptions(options)
+      const defaults = (scope: AmenityScope): AmenityValue[] => options.amenities.filter(item => item.scope === scope).map(item => ({ key: item.attribute_key, value: 'unknown' }))
+      setFormValues({
+        ...initialFormValues,
+        propertyAmenities: defaults('property'),
+        floors: [{ number: '0', label: 'Ground floor', notes: '', amenities: defaults('floor'), rooms: [{ ...newRoom(1), amenities: defaults('room') }] }],
+      })
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Unable to load form options.')
     } finally {
       setFormLoading(false)
+    }
+  }
+
+  async function handlePhotoSelection(fileList: FileList | null) {
+    if (!fileList?.length) return
+    const files = Array.from(fileList)
+    if (formValues.images.length + files.length > 30) {
+      setFormError('A property can have at most 30 photos.')
+      return
+    }
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/avif']
+    for (const file of files) {
+      if (!allowed.includes(file.type)) { setFormError(`${file.name}: use JPG, PNG, WebP or AVIF.`); return }
+      if (file.size > 10 * 1024 * 1024) { setFormError(`${file.name}: each photo must be 10 MB or smaller.`); return }
+    }
+    setFormError('')
+    setUploadingPhotos(true)
+    try {
+      const uploaded: PropertyFormValues['images'] = []
+      for (const file of files) {
+        const presignResponse = await fetch('http://localhost:3001/api/admin/media/presign-upload', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contentType: file.type, fileSize: file.size }),
+        })
+        const presign = await presignResponse.json()
+        if (!presignResponse.ok) throw new Error(presign.error ?? `Could not prepare upload for ${file.name}.`)
+        const uploadForm = new FormData()
+        Object.entries(presign.fields as Record<string, string>).forEach(([key, value]) => uploadForm.append(key, value))
+        uploadForm.append('file', file)
+        const uploadResponse = await fetch(presign.url as string, { method: 'POST', body: uploadForm })
+        if (!uploadResponse.ok) throw new Error(`S3 upload failed for ${file.name} (${uploadResponse.status}). Check the bucket CORS settings.`)
+        uploaded.push({ key: presign.key as string, url: `s3://${presign.key as string}`, previewUrl: URL.createObjectURL(file), fileName: file.name, label: 'other', altText: file.name.replace(/\.[^.]+$/, ''), isCover: formValues.images.length === 0 && uploaded.length === 0 })
+      }
+      setFormValues(prev => ({ ...prev, images: [...prev.images, ...uploaded].map((image, index) => ({ ...image, isCover: prev.images.some(existing => existing.isCover) ? image.isCover : index === 0 })) }))
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Photo upload failed.')
+    } finally {
+      setUploadingPhotos(false)
     }
   }
 
@@ -195,6 +250,15 @@ function App() {
           setFormError(`Check the room name, type and capacity for ${room.label || 'an unnamed room'}.`)
           setReviewMode(false)
           return
+        }
+        if (room.type === 'shared') {
+          const totalBeds = Number(room.totalBeds)
+          const availableBeds = room.availableBeds.trim() === '' ? null : Number(room.availableBeds)
+          if (!Number.isSafeInteger(totalBeds) || totalBeds < 2 || totalBeds > capacity || (availableBeds !== null && (!Number.isSafeInteger(availableBeds) || availableBeds < 0 || availableBeds > totalBeds))) {
+            setFormError(`Check total and available bed counts for ${room.label}. Available beds cannot exceed total beds or room capacity.`)
+            setReviewMode(false)
+            return
+          }
         }
         if (!room.offers.length || room.offers.some(offer => !offer.amount.trim() || !Number.isFinite(Number(offer.amount)) || Number(offer.amount) <= 0)) {
           setFormError(`Add a valid positive monthly rent offer for ${room.label}.`)
@@ -231,15 +295,19 @@ function App() {
       electricityRatePerUnit: formValues.electricityBillingMode === 'metered' ? parseOptionalNumber(formValues.electricityRatePerUnit) : null,
       fourWheelerParkingSpaces: parseOptionalNumber(formValues.fourWheelerParkingSpaces),
       twoWheelerParkingSpaces: parseOptionalNumber(formValues.twoWheelerParkingSpaces),
-      floors: formValues.floors.map(floor => ({ number: Number(floor.number), label: floor.label.trim(), notes: floor.notes.trim() || undefined,
+      propertyAmenities: formValues.propertyAmenities,
+      floors: formValues.floors.map(floor => ({ number: Number(floor.number), label: floor.label.trim(), notes: floor.notes.trim() || undefined, amenities: floor.amenities,
         rooms: floor.rooms.map(room => ({ label: room.label.trim(), type: room.type, maxOccupants: Number(room.maxOccupants), status: room.status,
+          availabilityLastConfirmedAt: room.availabilityLastConfirmedAt || null,
+          beds: room.type === 'single' ? [{ label: 'Bed 1', type: 'single', status: room.status === 'available' ? 'available' : room.status === 'occupied' ? 'occupied' : room.status === 'reserved' ? 'reserved' : room.status === 'unavailable' ? 'unavailable' : 'unknown' }] : Array.from({ length: Number(room.totalBeds) || 0 }, (_, bedIndex) => ({ label: `Bed ${bedIndex + 1}`, type: 'single', status: room.availableBeds.trim() === '' ? 'unknown' : bedIndex < Number(room.availableBeds) ? 'available' : 'unavailable' })),
+          amenities: room.amenities,
           furnishingStatus: room.furnishingStatus || undefined, attachedBathroom: toNullableBoolean(room.attachedBathroom),
           wifiAvailableInRoom: toNullableBoolean(room.wifiAvailableInRoom), wifiSpeedMbps: parseOptionalNumber(room.wifiSpeedMbps), notes: room.notes.trim() || undefined,
           offers: room.offers.map(offer => ({ amount: Number(offer.amount), foodOption: offer.foodOption, status: offer.status, rentBasis: room.type === 'shared' ? 'per_bed' : 'per_room' })),
           charges: room.charges.map(charge => ({ name: charge.name.trim(), amount: Number(charge.amount), basis: charge.basis, mandatory: charge.mandatory, description: charge.description.trim() || undefined }))
         }))
       })),
-      images: formValues.images.filter(image => image.url.trim()).map((image, index) => ({ url: image.url.trim(), label: image.label, altText: image.altText.trim(), isCover: image.isCover, displayOrder: index }))
+      images: formValues.images.map((image, index) => ({ key: image.key, url: image.url, label: image.label, altText: image.altText.trim(), isCover: image.isCover, displayOrder: index }))
     }
     if ((payload.latitude === null) !== (payload.longitude === null)) {
       setFormError('Enter both latitude and longitude, or leave both blank.')
@@ -479,7 +547,7 @@ function App() {
                     <label className="form-field">Property type<select value={formValues.propertyType} onChange={e => setFormValues({ ...formValues, propertyType: e.target.value as 'PG' | 'Flat' })}><option value="PG">PG</option><option value="Flat">Flat</option></select></label>
                   </div>
                   <div className="form-row"><label className="form-field">Locality<select value={formValues.localityId} disabled={!formValues.cityId} onChange={e => setFormValues({ ...formValues, localityId: e.target.value })}><option value="">Unknown / not specified</option>{formOptions.localities.filter(l => l.city_id === formValues.cityId).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
-                    <label className="form-field">Demo owner *<select required value={formValues.ownerId} onChange={e => setFormValues({ ...formValues, ownerId: e.target.value })}><option value="">Select owner</option>{formOptions.owners.map(owner => <option key={owner.id} value={owner.id}>{owner.name} — {owner.data_label.replaceAll('_', ' ')}</option>)}</select></label></div>
+                    <label className="form-field">Owner *<select required value={formValues.ownerId} onChange={e => setFormValues({ ...formValues, ownerId: e.target.value })}><option value="">Select owner</option>{formOptions.owners.map(owner => <option key={owner.id} value={owner.id}>{owner.name} — {owner.data_label.replaceAll('_', ' ')}</option>)}</select>{formValues.ownerId && <span className="field-hint">Contact: {[formOptions.owners.find(o => o.id === formValues.ownerId)?.contact_phone, formOptions.owners.find(o => o.id === formValues.ownerId)?.contact_email].filter(Boolean).join(' · ') || 'No contact details on record'}</span>}</label></div>
                   <label className="form-field">Street address (optional)<input maxLength={500} value={formValues.address} onChange={e => setFormValues({ ...formValues, address: e.target.value })} placeholder="Address supplied by owner" /></label>
                   <label className="form-field">Google Maps URL (optional)<input type="url" value={formValues.googleMapsUrl} onChange={e => setFormValues({ ...formValues, googleMapsUrl: e.target.value })} placeholder="https://maps.google.com/…" /></label>
                   <div className="form-row"><label className="form-field">Latitude<input type="number" step="any" min="-90" max="90" value={formValues.latitude} onChange={e => setFormValues({ ...formValues, latitude: e.target.value })} placeholder="Optional" /></label><label className="form-field">Longitude<input type="number" step="any" min="-180" max="180" value={formValues.longitude} onChange={e => setFormValues({ ...formValues, longitude: e.target.value })} placeholder="Optional" /></label></div>
@@ -488,6 +556,7 @@ function App() {
                   <div className="form-row"><label className="form-field">Occupancy eligibility<select value={formValues.genderEligibility} onChange={e => setFormValues({ ...formValues, genderEligibility: e.target.value as PropertyFormValues['genderEligibility'] })}><option value="unknown">Unknown</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Unisex">Unisex</option></select></label><label className="form-field">Couples allowed?<select value={formValues.couplesAllowed} onChange={e => setFormValues({ ...formValues, couplesAllowed: e.target.value as PropertyFormValues['couplesAllowed'] })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label></div>
                   <div className="form-row"><label className="form-field">Co-ed rooms allowed?<select value={formValues.coEdRoomsAllowed} onChange={e => setFormValues({ ...formValues, coEdRoomsAllowed: e.target.value as PropertyFormValues['coEdRoomsAllowed'] })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label><label className="form-field">Cooking allowed?<select value={formValues.cookingAllowed} onChange={e => setFormValues({ ...formValues, cookingAllowed: e.target.value as PropertyFormValues['cookingAllowed'] })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label></div>
                   <label className="form-field">House rules / restrictions<textarea rows={2} value={formValues.houseRulesNotes} onChange={e => setFormValues({ ...formValues, houseRulesNotes: e.target.value })} placeholder="Curfew, visitors, parents, other rules (if known)" /></label>
+                  <AmenityChecklist title="Property amenities" options={formOptions.amenities.filter(a => a.scope === 'property')} values={formValues.propertyAmenities} onChange={values => setFormValues(prev => ({ ...prev, propertyAmenities: values }))} />
                   <h3 className="form-section-title">3. Rent, deposit and utilities</h3>
                   <div className="form-row"><label className="form-field">Security deposit<select value={formValues.securityDepositBasis} onChange={e => setFormValues({ ...formValues, securityDepositBasis: e.target.value as PropertyFormValues['securityDepositBasis'] })}><option value="unknown">Unknown</option><option value="two_weeks_rent">Two weeks' rent</option><option value="one_month_rent">One month's rent</option><option value="two_months_rent">Two months' rent</option><option value="three_months_rent">Three months' rent</option><option value="four_months_rent">Four months' rent</option><option value="fixed_amount">Fixed amount</option><option value="not_required">No deposit required</option></select></label>{formValues.securityDepositBasis === 'fixed_amount' && <label className="form-field">Deposit amount (₹)<input type="number" min="0" step="0.01" value={formValues.securityDepositAmount} onChange={e => setFormValues({ ...formValues, securityDepositAmount: e.target.value })} /></label>}</div>
                   <label className="form-field">Deposit refund policy<select value={formValues.securityDepositRefundPolicy} onChange={e => setFormValues({ ...formValues, securityDepositRefundPolicy: e.target.value as PropertyFormValues['securityDepositRefundPolicy'] })}><option value="unknown">Unknown / not confirmed</option><option value="fully_refundable_no_deductions">100% refundable, no deductions (confirmed)</option><option value="refundable_with_deductions">Refundable with possible deductions</option></select></label>
@@ -500,14 +569,18 @@ function App() {
                   {formValues.floors.map((floor, fi) => <div className="nested-card" key={fi}><div className="nested-card-heading"><strong>Floor {fi + 1}</strong>{formValues.floors.length > 1 && <button type="button" className="text-button danger-text" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.filter((_, i) => i !== fi) })}>Remove floor</button>}</div>
                     <div className="form-row"><label className="form-field">Floor number<input type="number" min="-5" max="100" step="1" value={floor.number} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, number: e.target.value } : f) })} /></label><label className="form-field">Floor label<input required value={floor.label} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, label: e.target.value } : f) })} placeholder="Ground floor, First floor…" /></label></div>
                     <label className="form-field">Floor notes<input value={floor.notes} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, notes: e.target.value } : f) })} placeholder="Optional" /></label>
+                    <AmenityChecklist title="Amenities on this floor" options={formOptions.amenities.filter(a => a.scope === 'floor')} values={floor.amenities} onChange={values => setFormValues(prev => ({ ...prev, floors: prev.floors.map((f, i) => i === fi ? { ...f, amenities: values } : f) }))} />
                     {floor.rooms.map((room, ri) => <div className="room-card" key={ri}><div className="nested-card-heading"><strong>Room {ri + 1}</strong>{floor.rooms.length > 1 && <button type="button" className="text-button danger-text" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.filter((_, j) => j !== ri) } : f) })}>Remove room</button>}</div>
-                      <div className="form-row"><label className="form-field">Room label<input required value={room.label} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, label: e.target.value } : r) } : f) })} /></label><label className="form-field">Room type<select value={room.type} onChange={e => { const type = e.target.value as RoomForm['type']; setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, type, maxOccupants: type === 'single' ? '1' : '2' } : r) } : f) }) }}><option value="single">Single / private</option><option value="shared">Shared</option></select></label></div>
+                      <div className="form-row"><label className="form-field">Room label<input required value={room.label} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, label: e.target.value } : r) } : f) })} /></label><label className="form-field">Room type<select value={room.type} onChange={e => { const type = e.target.value as RoomForm['type']; setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, type, maxOccupants: type === 'single' ? '1' : '2', totalBeds: type === 'single' ? '1' : '2', availableBeds: '' } : r) } : f) }) }}><option value="single">Single / private</option><option value="shared">Shared</option></select></label></div>
                       <div className="form-row"><label className="form-field">Maximum occupants<input type="number" min={room.type === 'single' ? 1 : 2} max="50" step="1" value={room.maxOccupants} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, maxOccupants: e.target.value } : r) } : f) })} /></label><label className="form-field">Availability<select value={room.status} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, status: e.target.value as RoomForm['status'] } : r) } : f) })}><option value="unknown">Unknown</option><option value="available">Available</option><option value="occupied">Occupied</option><option value="reserved">Reserved</option><option value="unavailable">Unavailable</option></select></label></div>
+                      <label className="form-field">Availability last confirmed (optional)<input type="date" value={room.availabilityLastConfirmedAt} onChange={e => setFormValues(prev => ({ ...prev, floors: prev.floors.map((f, i) => i !== fi ? f : ({ ...f, rooms: f.rooms.map((r, j) => j !== ri ? r : ({ ...r, availabilityLastConfirmedAt: e.target.value })) })) }))} /><span className="field-hint">Leave blank if nobody has recently confirmed availability.</span></label>
+                      {room.type === 'shared' && <div className="form-row"><label className="form-field">Total beds *<input type="number" min="2" max={room.maxOccupants} step="1" value={room.totalBeds} onChange={e => setFormValues(prev => ({ ...prev, floors: prev.floors.map((f, i) => i !== fi ? f : ({ ...f, rooms: f.rooms.map((r, j) => j !== ri ? r : ({ ...r, totalBeds: e.target.value })) })) }))} /></label><label className="form-field">Available beds<select value={room.availableBeds} onChange={e => setFormValues(prev => ({ ...prev, floors: prev.floors.map((f, i) => i !== fi ? f : ({ ...f, rooms: f.rooms.map((r, j) => j !== ri ? r : ({ ...r, availableBeds: e.target.value })) })) }))}><option value="">Unknown</option>{Array.from({ length: Math.max(0, Number(room.totalBeds) || 0) + 1 }, (_, n) => <option key={n} value={n}>{n}</option>)}</select></label></div>}
                       <div className="form-row"><label className="form-field">Furnishing<select value={room.furnishingStatus} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, furnishingStatus: e.target.value as RoomForm['furnishingStatus'] } : r) } : f) })}><option value="">Unknown</option><option value="furnished">Furnished</option><option value="semi_furnished">Semi-furnished</option><option value="unfurnished">Unfurnished</option></select></label><label className="form-field">Attached bathroom<select value={room.attachedBathroom} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, attachedBathroom: e.target.value as RoomForm['attachedBathroom'] } : r) } : f) })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label></div>
                       <div className="form-row"><label className="form-field">Wi-Fi in room<select value={room.wifiAvailableInRoom} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, wifiAvailableInRoom: e.target.value as RoomForm['wifiAvailableInRoom'] } : r) } : f) })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label><label className="form-field">Wi-Fi speed (Mbps)<input type="number" min="0" step="1" value={room.wifiSpeedMbps} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, wifiSpeedMbps: e.target.value } : r) } : f) })} placeholder="Unknown" /></label></div>
                       <label className="form-field">Room notes<input value={room.notes} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, notes: e.target.value } : r) } : f) })} placeholder="Optional" /></label>
-                      <div className="subsection-heading"><strong>Monthly rent offers</strong><button type="button" className="text-button" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: [...r.offers, newOffer()] } : r) } : f) })}>＋ Add offer</button></div>
-                      {room.offers.map((offer, oi) => <div className="form-row offer-row" key={oi}><label className="form-field">Monthly rent (₹)<input required type="number" min="0.01" step="0.01" value={offer.amount} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: r.offers.map((o, k) => k === oi ? { ...o, amount: e.target.value } : o) } : r) } : f) })} /></label><label className="form-field">Food option<select value={offer.foodOption} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: r.offers.map((o, k) => k === oi ? { ...o, foodOption: e.target.value as OfferForm['foodOption'] } : o) } : r) } : f) })}><option value="unknown">Unknown</option><option value="included">Food included</option><option value="excluded">Food excluded</option></select></label>{room.offers.length > 1 && <button type="button" className="text-button danger-text" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: r.offers.filter((_, k) => k !== oi) } : r) } : f) })}>Remove offer</button>}</div>)}
+                      <AmenityChecklist title="Room amenities" options={formOptions.amenities.filter(a => a.scope === 'room')} values={room.amenities} onChange={values => setFormValues(prev => ({ ...prev, floors: prev.floors.map((f, i) => i !== fi ? f : ({ ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, amenities: values } : r) })) }))} />
+                      <div className="subsection-heading"><strong>Monthly rent offers — {room.type === 'shared' ? 'price per bed' : 'price per room'}</strong><button type="button" className="text-button" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: [...r.offers, newOffer()] } : r) } : f) })}>＋ Add offer</button></div>
+                      {room.offers.map((offer, oi) => <div className="form-row offer-row" key={oi}><label className="form-field">Monthly rent (₹/{room.type === 'shared' ? 'bed' : 'room'})<input required type="number" min="0.01" step="0.01" value={offer.amount} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: r.offers.map((o, k) => k === oi ? { ...o, amount: e.target.value } : o) } : r) } : f) })} /></label><label className="form-field">Food option<select value={offer.foodOption} onChange={e => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: r.offers.map((o, k) => k === oi ? { ...o, foodOption: e.target.value as OfferForm['foodOption'] } : o) } : r) } : f) })}><option value="unknown">Unknown</option><option value="included">Food included</option><option value="excluded">Food excluded</option></select></label>{room.offers.length > 1 && <button type="button" className="text-button danger-text" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, offers: r.offers.filter((_, k) => k !== oi) } : r) } : f) })}>Remove offer</button>}</div>)}
                       <div className="subsection-heading"><strong>Additional room charges</strong><button type="button" className="text-button" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: f.rooms.map((r, j) => j === ri ? { ...r, charges: [...r.charges, newCharge()] } : r) } : f) })}>＋ Add charge</button></div>
                       {room.charges.map((charge, ci) => (
                         <div className="charge-card" key={ci}>
@@ -538,16 +611,16 @@ function App() {
                         </div>
                       ))}
                     </div>)}
-                    <button type="button" className="secondary-button compact-button" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: [...f.rooms, newRoom(f.rooms.length + 1)] } : f) })}>＋ Add room to this floor</button>
+                    <button type="button" className="secondary-button compact-button" onClick={() => setFormValues({ ...formValues, floors: formValues.floors.map((f, i) => i === fi ? { ...f, rooms: [...f.rooms, { ...newRoom(f.rooms.length + 1), amenities: formOptions.amenities.filter(a => a.scope === 'room').map(a => ({ key: a.attribute_key, value: 'unknown' as const })) }] } : f) })}>＋ Add room to this floor</button>
                   </div>)}
-                  <button type="button" className="secondary-button compact-button" onClick={() => setFormValues({ ...formValues, floors: [...formValues.floors, { number: String(formValues.floors.length), label: `Floor ${formValues.floors.length}`, notes: '', rooms: [newRoom(1)] }] })}>＋ Add floor</button>
-                  <h3 className="form-section-title">5. Photos (optional)</h3>
-                  <p className="form-help">Add image URLs that are already accessible. This field does not upload files to storage.</p>
-                  {formValues.images.map((image, i) => <div className="nested-card" key={i}><label className="form-field">Image URL<input type="url" value={image.url} onChange={e => setFormValues({ ...formValues, images: formValues.images.map((im, j) => j === i ? { ...im, url: e.target.value } : im) })} placeholder="https://…" /></label><div className="form-row"><label className="form-field">Photo label<select value={image.label} onChange={e => setFormValues({ ...formValues, images: formValues.images.map((im, j) => j === i ? { ...im, label: e.target.value as PropertyFormValues['images'][number]['label'] } : im) })}><option value="exterior">Exterior</option><option value="bedroom">Bedroom</option><option value="kitchen">Kitchen</option><option value="bathroom">Bathroom</option><option value="living_area">Living area</option><option value="other">Other</option></select></label><label className="form-field">Alt text<input value={image.altText} onChange={e => setFormValues({ ...formValues, images: formValues.images.map((im, j) => j === i ? { ...im, altText: e.target.value } : im) })} placeholder="Describe the photo" /></label></div><label className="checkbox-field"><input type="checkbox" checked={image.isCover} onChange={e => setFormValues({ ...formValues, images: formValues.images.map((im, j) => ({ ...im, isCover: j === i ? e.target.checked : false })) })} /> Use as cover photo</label><button type="button" className="text-button danger-text" onClick={() => setFormValues({ ...formValues, images: formValues.images.filter((_, j) => j !== i) })}>Remove photo</button></div>)}
-                  {formValues.images.length < 30 && <button type="button" className="secondary-button compact-button" onClick={() => setFormValues({ ...formValues, images: [...formValues.images, { url: '', label: 'other', altText: '', isCover: formValues.images.length === 0 }] })}>＋ Add photo URL</button>}
-                </> : <div className="review-panel"><h3>Confirm before saving</h3><p>This creates a draft record, not a published or verified listing.</p><div className="review-grid"><span>Property</span><strong>{formValues.title}</strong><span>City / locality</span><strong>{formOptions.cities.find(c => c.id === formValues.cityId)?.name ?? 'Unknown'} · {formOptions.localities.find(l => l.id === formValues.localityId)?.name ?? 'Locality unknown'}</strong><span>Property type</span><strong>{formValues.propertyType}</strong><span>Owner</span><strong>{formOptions.owners.find(o => o.id === formValues.ownerId)?.name ?? 'Unknown'}</strong><span>Floors / rooms</span><strong>{formValues.floors.length} floors · {formValues.floors.reduce((sum, f) => sum + f.rooms.length, 0)} rooms</strong><span>Monthly rent offers</span><strong>{formValues.floors.reduce((sum, f) => sum + f.rooms.reduce((rSum, r) => rSum + r.offers.length, 0), 0)} offers</strong><span>Deposit</span><strong>{formValues.securityDepositBasis.replaceAll('_', ' ')}</strong><span>Notice period</span><strong>{formValues.noticePeriodMonths === '' ? 'Unknown' : formValues.noticePeriodMonths === '0' ? 'None' : `${formValues.noticePeriodMonths} months`}</strong><span>Photos</span><strong>{formValues.images.filter(i => i.url.trim()).length} URLs</strong><span>Record status</span><strong>Draft · Synthetic demo · Unverified</strong></div><div className="review-caution">Please confirm rent, eligibility, deposit, rules and availability are based on information you actually have. Leave unsupported details as Unknown.</div></div>}
+                  <button type="button" className="secondary-button compact-button" onClick={() => setFormValues({ ...formValues, floors: [...formValues.floors, { number: String(formValues.floors.length), label: `Floor ${formValues.floors.length}`, notes: '', amenities: formOptions.amenities.filter(a => a.scope === 'floor').map(a => ({ key: a.attribute_key, value: 'unknown' as const })), rooms: [{ ...newRoom(1), amenities: formOptions.amenities.filter(a => a.scope === 'room').map(a => ({ key: a.attribute_key, value: 'unknown' as const })) }] }] })}>＋ Add floor</button>
+                  <h3 className="form-section-title">5. Property photos</h3>
+                  <p className="form-help">Upload up to 30 JPG, PNG, WebP or AVIF photos. Each file must be 10 MB or smaller. Files upload to the configured S3 bucket; the property is not saved until you confirm the review.</p>
+                  <label className="upload-dropzone"><span className="upload-icon">↑</span><strong>{uploadingPhotos ? 'Uploading photos…' : 'Choose photos from your device'}</strong><span>Multiple files supported · 10 MB maximum each</span><input type="file" accept="image/jpeg,image/png,image/webp,image/avif" multiple disabled={uploadingPhotos || formValues.images.length >= 30} onChange={event => { void handlePhotoSelection(event.currentTarget.files); event.currentTarget.value = '' }} /></label>
+                  {formValues.images.map((image, i) => <div className="photo-edit-card" key={image.key}><img src={image.previewUrl} alt={image.altText || image.fileName} className="photo-preview" /><div className="photo-edit-fields"><strong>{image.fileName}</strong><div className="form-row"><label className="form-field">Photo label<select value={image.label} onChange={e => setFormValues(prev => ({ ...prev, images: prev.images.map((im, j) => j === i ? { ...im, label: e.target.value as PropertyFormValues['images'][number]['label'] } : im) }))}><option value="exterior">Exterior</option><option value="bedroom">Bedroom</option><option value="kitchen">Kitchen</option><option value="bathroom">Bathroom</option><option value="living_area">Living area</option><option value="other">Other</option></select></label><label className="form-field">Alt text<input value={image.altText} onChange={e => setFormValues(prev => ({ ...prev, images: prev.images.map((im, j) => j === i ? { ...im, altText: e.target.value } : im) }))} placeholder="Describe the photo" /></label></div><label className="checkbox-field"><input type="checkbox" checked={image.isCover} onChange={e => setFormValues(prev => ({ ...prev, images: prev.images.map((im, j) => ({ ...im, isCover: j === i ? e.target.checked : false })) }))} /> Use as cover photo</label><button type="button" className="text-button danger-text" onClick={() => { URL.revokeObjectURL(image.previewUrl); setFormValues(prev => ({ ...prev, images: prev.images.filter((_, j) => j !== i) })) }}>Remove photo</button></div></div>)}
+                </> : <div className="review-panel"><h3>Confirm before saving</h3><p>This creates a draft record, not a published or verified listing.</p><div className="review-grid"><span>Property</span><strong>{formValues.title}</strong><span>City / locality</span><strong>{formOptions.cities.find(c => c.id === formValues.cityId)?.name ?? 'Unknown'} · {formOptions.localities.find(l => l.id === formValues.localityId)?.name ?? 'Locality unknown'}</strong><span>Property type</span><strong>{formValues.propertyType}</strong><span>Owner</span><strong>{formOptions.owners.find(o => o.id === formValues.ownerId)?.name ?? 'Unknown'}</strong><span>Floors / rooms</span><strong>{formValues.floors.length} floors · {formValues.floors.reduce((sum, f) => sum + f.rooms.length, 0)} rooms</strong><span>Monthly rent offers</span><strong>{formValues.floors.reduce((sum, f) => sum + f.rooms.reduce((rSum, r) => rSum + r.offers.length, 0), 0)} offers</strong><span>Deposit</span><strong>{formValues.securityDepositBasis.replaceAll('_', ' ')}</strong><span>Notice period</span><strong>{formValues.noticePeriodMonths === '' ? 'Unknown' : formValues.noticePeriodMonths === '0' ? 'None' : `${formValues.noticePeriodMonths} months`}</strong><span>Photos</span><strong>{formValues.images.length} uploaded files</strong><span>Amenities</span><strong>{formValues.propertyAmenities.filter(a => a.value !== 'unknown').length} property values · {formValues.floors.reduce((n, f) => n + f.amenities.filter(a => a.value !== 'unknown').length + f.rooms.reduce((rn, r) => rn + r.amenities.filter(a => a.value !== 'unknown').length, 0), 0)} floor/room values set</strong><span>Record status</span><strong>Draft · Synthetic demo · Unverified</strong></div><div className="review-detail-section"><h4>Property amenities</h4><p>{formValues.propertyAmenities.filter(a => a.value !== 'unknown').map(a => `${formOptions.amenities.find(o => o.attribute_key === a.key)?.display_name ?? a.key}: ${a.value === 'yes' ? 'Yes' : 'No'}`).join(' · ') || 'No property amenity has been confirmed; unset values remain Unknown.'}</p>{formValues.floors.map((floor, fi) => <div key={fi}><h4>{floor.label} — floor amenities</h4><p>{floor.amenities.filter(a => a.value !== 'unknown').map(a => `${formOptions.amenities.find(o => o.attribute_key === a.key)?.display_name ?? a.key}: ${a.value === 'yes' ? 'Yes' : 'No'}`).join(' · ') || 'No floor amenities confirmed.'}</p>{floor.rooms.map((room, ri) => <div key={ri}><h4>{room.label} — room amenities and availability</h4><p>{room.type === 'shared' ? `${room.totalBeds} total beds · ${room.availableBeds === '' ? 'available beds unknown' : `${room.availableBeds} available beds`}` : `Room status: ${room.status}`}{room.availabilityLastConfirmedAt ? ` · Confirmed ${room.availabilityLastConfirmedAt}` : ' · Availability confirmation date unknown'}</p><p>{room.amenities.filter(a => a.value !== 'unknown').map(a => `${formOptions.amenities.find(o => o.attribute_key === a.key)?.display_name ?? a.key}: ${a.value === 'yes' ? 'Yes' : 'No'}`).join(' · ') || 'No room amenities confirmed.'}</p></div>)}</div>)}</div><div className="review-photo-strip">{formValues.images.map(image => <figure key={image.key}><img src={image.previewUrl} alt={image.altText || image.fileName} /><figcaption>{image.label.replaceAll('_', ' ')}{image.isCover ? ' · Cover' : ''}</figcaption></figure>)}</div><div className="review-caution">Please confirm rent, eligibility, deposit, rules and availability are based on information you actually have. Leave unsupported details as Unknown.</div></div>}
                 {formError && <p role="alert" className="form-error">{formError}</p>}
-                <div className="modal-footer">{reviewMode && <button className="secondary-button" type="button" disabled={savingProperty} onClick={() => { setReviewMode(false); setFormError('') }}>Back to edit</button>}<button className="secondary-button" type="button" disabled={savingProperty} onClick={() => setShowAddForm(false)}>Cancel</button><button className="primary-button" type="submit" disabled={savingProperty}>{savingProperty ? 'Saving…' : reviewMode ? 'Confirm and save draft' : 'Review before saving'}</button></div>
+                <div className="modal-footer">{reviewMode && <button className="secondary-button" type="button" disabled={savingProperty} onClick={() => { setReviewMode(false); setFormError('') }}>Back to edit</button>}<button className="secondary-button" type="button" disabled={savingProperty} onClick={() => setShowAddForm(false)}>Cancel</button><button className="primary-button" type="submit" disabled={savingProperty || uploadingPhotos}>{uploadingPhotos ? 'Uploading photos…' : savingProperty ? 'Saving…' : reviewMode ? 'Confirm and save draft' : 'Review before saving'}</button></div>
               </form>
             )}
             {formError && formLoading && <p role="alert" className="form-error">{formError}</p>}
@@ -557,6 +630,12 @@ function App() {
       {toast && <div className="toast" role="status"><span>i</span>{toast}</div>}
     </div>
   )
+}
+
+function AmenityChecklist({ title, options, values, onChange }: { title: string; options: AmenityOption[]; values: AmenityValue[]; onChange: (values: AmenityValue[]) => void }) {
+  if (!options.length) return null
+  const current = new Map(values.map(item => [item.key, item.value]))
+  return <section className="amenity-checklist"><div className="subsection-heading"><strong>{title}</strong><span>{options.length} attributes</span></div><p className="form-help">Set each attribute to Yes, No or Unknown. Unknown is not treated as No.</p><div className="amenity-grid">{options.map(option => <label className="amenity-row" key={option.attribute_key}><span>{option.display_name}</span><select value={current.get(option.attribute_key) ?? 'unknown'} onChange={event => onChange(values.map(item => item.key === option.attribute_key ? { ...item, value: event.target.value as AmenityValue['value'] } : item))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>)}</div></section>
 }
 
 function StatCard({ label, value, note, icon }: { label: string; value: string; note: string; icon: string }) {
