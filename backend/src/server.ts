@@ -55,7 +55,7 @@ app.get('/api/health', async (_req, res) => {
  */
 app.get('/api/admin/form-options', async (_req, res) => {
   try {
-    const [cities, localities, owners] = await Promise.all([
+    const [cities, localities, owners, amenities] = await Promise.all([
       pool.query(`
         SELECT id, canonical_name AS name, state_name
         FROM cities
@@ -79,12 +79,19 @@ app.get('/api/admin/form-options', async (_req, res) => {
         WHERE owner_status = 'active'
         ORDER BY display_name
       `),
+      pool.query(`
+        SELECT attribute_key, display_name, scope
+        FROM attribute_catalog
+        WHERE value_type = 'boolean' AND scope IN ('property', 'floor', 'room')
+        ORDER BY scope, display_name
+      `),
     ]);
 
     res.json({
       cities: cities.rows,
       localities: localities.rows,
       owners: owners.rows,
+      amenities: amenities.rows,
     });
   } catch (error) {
     console.error('Failed to load property form options:', error);
@@ -114,7 +121,7 @@ app.post('/api/admin/properties', async (req, res) => {
     securityDepositRefundPolicy = 'unknown', securityDepositDeductionNotes = null,
     noticePeriodMonths = null, electricityBillingMode = 'unknown',
     electricityRatePerUnit = null, fourWheelerParkingSpaces = null,
-    twoWheelerParkingSpaces = null, floors, // New payload; legacy fields below remain supported.
+    twoWheelerParkingSpaces = null, propertyAmenities = [], floors, // New payload; legacy fields below remain supported.
     rentAmount, rentBasis, roomType, maxOccupants,
   } = body;
 
@@ -146,10 +153,11 @@ app.post('/api/admin/properties', async (req, res) => {
   }
 
   type IncomingCharge = { name: string; amount: number; basis: string; mandatory: boolean; description?: string };
+  type IncomingAmenity = { key: string; value: 'yes' | 'no' | 'unknown' };
   type IncomingBed = { label: string; type?: string; status?: string };
   type IncomingOffer = { amount: number; foodOption?: string; status?: string; rentBasis?: string };
-  type IncomingRoom = { label: string; type: string; maxOccupants: number; status?: string; furnishingStatus?: string; attachedBathroom?: boolean | null; wifiAvailableInRoom?: boolean | null; wifiSpeedMbps?: number | null; notes?: string; beds?: IncomingBed[]; offers?: IncomingOffer[]; charges?: IncomingCharge[] };
-  type IncomingFloor = { number: number; label: string; notes?: string; rooms: IncomingRoom[] };
+  type IncomingRoom = { label: string; type: string; maxOccupants: number; status?: string; availabilityLastConfirmedAt?: string | null; furnishingStatus?: string; attachedBathroom?: boolean | null; wifiAvailableInRoom?: boolean | null; wifiSpeedMbps?: number | null; notes?: string; amenities?: IncomingAmenity[]; beds?: IncomingBed[]; offers?: IncomingOffer[]; charges?: IncomingCharge[] };
+  type IncomingFloor = { number: number; label: string; notes?: string; amenities?: IncomingAmenity[]; rooms: IncomingRoom[] };
   type IncomingImage = { key?: string; url: string; label?: string; altText?: string; displayOrder?: number; isCover?: boolean };
 
   let normalizedFloors: IncomingFloor[];
@@ -169,15 +177,40 @@ app.post('/api/admin/properties', async (req, res) => {
   const imageList = Array.isArray(body.images) ? body.images as IncomingImage[] : [];
   if (imageList.length > 30) return fail('A property can have at most 30 photos.');
   if (imageList.filter((image) => image.isCover).length > 1) return fail('Choose no more than one cover photo.');
+  const validateAmenities = (items: unknown, location: string): string | null => {
+    if (items == null) return null;
+    if (!Array.isArray(items)) return `${location} amenities must be a list.`;
+    const keys = new Set<string>();
+    for (const item of items as IncomingAmenity[]) {
+      if (!item || typeof item.key !== 'string' || !item.key.trim()) return `${location} contains an invalid amenity key.`;
+      if (!['yes', 'no', 'unknown'].includes(item.value)) return `${location} amenity values must be Yes, No, or Unknown.`;
+      if (keys.has(item.key)) return `${location} contains a duplicate amenity.`;
+      keys.add(item.key);
+    }
+    return null;
+  };
+  const propertyAmenityError = validateAmenities(propertyAmenities, 'Property');
+  if (propertyAmenityError) return fail(propertyAmenityError);
+
   const floorNumbers = new Set<number>();
   let roomCount = 0;
   for (const floor of normalizedFloors) {
+    const floorAmenityError = validateAmenities(floor.amenities, `Floor ${floor.label || floor.number}`);
+    if (floorAmenityError) return fail(floorAmenityError);
     if (!Number.isInteger(floor.number) || floor.number < -5 || floor.number > 100 || typeof floor.label !== 'string' || !floor.label.trim()) return fail('Each floor needs a valid floor number and label.');
     if (floorNumbers.has(floor.number)) return fail('Floor numbers must be unique within a property.');
     floorNumbers.add(floor.number);
     if (!Array.isArray(floor.rooms) || floor.rooms.length < 1 || floor.rooms.length > 100) return fail('Each floor must contain between 1 and 100 rooms.');
     const labels = new Set<string>();
     for (const room of floor.rooms) {
+      const roomAmenityError = validateAmenities(room.amenities, `Room ${room.label || ''}`);
+      if (roomAmenityError) return fail(roomAmenityError);
+      if (room.availabilityLastConfirmedAt != null) {
+        const dateValue = room.availabilityLastConfirmedAt;
+        if (typeof dateValue !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return fail(`Availability confirmation for ${room.label} must be a valid date.`);
+        const confirmedDate = new Date(`${dateValue}T00:00:00Z`);
+        if (Number.isNaN(confirmedDate.valueOf()) || confirmedDate.toISOString().slice(0, 10) !== dateValue) return fail(`Availability confirmation for ${room.label} must be a valid date.`);
+      }
       roomCount++;
       if (roomCount > 200) return fail('A property can contain at most 200 rooms.');
       if (typeof room.label !== 'string' || !room.label.trim() || labels.has(room.label.trim())) return fail('Each room needs a unique, non-empty label within its floor.');
@@ -247,25 +280,39 @@ app.post('/api/admin/properties', async (req, res) => {
       fourWheelerParkingSpaces, twoWheelerParkingSpaces]);
     const propertyId: string = propertyResult.rows[0].id;
 
+    const persistAmenities = async (scope: 'property' | 'floor' | 'room', entityId: string, items: IncomingAmenity[] = []) => {
+      const table = scope === 'property' ? 'property_attribute_values' : scope === 'floor' ? 'floor_attribute_values' : 'room_attribute_values';
+      const idColumn = scope === 'property' ? 'property_id' : scope === 'floor' ? 'floor_id' : 'room_id';
+      for (const item of items) {
+        await client.query(`
+          INSERT INTO ${table} (${idColumn}, attribute_key, value_state, value_boolean, verification_status, source_note)
+          VALUES ($1, $2, $3, $4, 'unverified', 'Entered in Roomler admin draft')
+        `, [entityId, item.key, item.value === 'unknown' ? 'unknown' : 'known', item.value === 'unknown' ? null : item.value === 'yes']);
+      }
+    };
+    await persistAmenities('property', propertyId, propertyAmenities as IncomingAmenity[]);
+
     for (const floor of normalizedFloors) {
       const floorResult = await client.query(`
         INSERT INTO property_floors (property_id, floor_number, floor_label, notes, data_label)
         VALUES ($1,$2,$3,$4,'synthetic_demo') RETURNING id
       `, [propertyId, floor.number, floor.label.trim(), floor.notes?.trim() || null]);
       const floorId: string = floorResult.rows[0].id;
+      await persistAmenities('floor', floorId, floor.amenities ?? []);
       for (const room of floor.rooms) {
         const roomResult = await client.query(`
           INSERT INTO rooms (floor_id, room_label, room_type, max_occupants, furnishing_status,
-            room_status, attached_bathroom, wifi_available_in_room, wifi_speed_mbps, notes, data_label)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'synthetic_demo') RETURNING id
+            room_status, attached_bathroom, wifi_available_in_room, wifi_speed_mbps, notes, availability_last_confirmed_at, data_label)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'synthetic_demo') RETURNING id
         `, [floorId, room.label.trim(), room.type, room.maxOccupants, room.furnishingStatus ?? null,
           room.status ?? 'unknown', room.attachedBathroom ?? null, room.wifiAvailableInRoom ?? null,
-          room.wifiSpeedMbps ?? null, room.notes?.trim() || null]);
+          room.wifiSpeedMbps ?? null, room.notes?.trim() || null, room.availabilityLastConfirmedAt ?? null]);
         const roomId: string = roomResult.rows[0].id;
+        await persistAmenities('room', roomId, room.amenities ?? []);
         const beds = Array.isArray(room.beds) ? room.beds : [];
         for (const [index, bed] of beds.entries()) {
-          await client.query(`INSERT INTO beds (room_id, bed_label, bed_type, bed_status, data_label)
-            VALUES ($1,$2,$3,$4,'synthetic_demo')`, [roomId, bed.label.trim(), bed.type ?? 'single', bed.status ?? 'unknown']);
+          await client.query(`INSERT INTO beds (room_id, bed_label, bed_type, bed_status, availability_last_confirmed_at, data_label)
+            VALUES ($1,$2,$3,$4,$5,'synthetic_demo')`, [roomId, bed.label.trim(), bed.type ?? 'single', bed.status ?? 'unknown', room.availabilityLastConfirmedAt ?? null]);
         }
         for (const offer of room.offers ?? []) {
           const expectedBasis = room.type === 'shared' ? 'per_bed' : 'per_room';
