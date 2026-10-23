@@ -33,7 +33,7 @@ export default function PublicApp() {
  const [error,setError] = useState('')
  const [notice,setNotice] = useState('')
  const [filters,setFilters] = useState(false)
- const [sort,setSort] = useState('relevance')
+ const [sort,setSort] = useState('price')
  async function search() {
   setBusy(true); setError(''); setNotice('')
   const p = new URLSearchParams()
