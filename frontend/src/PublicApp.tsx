@@ -60,7 +60,27 @@ export default function PublicApp() {
   try {const r=await fetch(API+'/properties/'+item.id+(demo?'?includeDemo=true':''));const b=await r.json();if(!r.ok)throw new Error(b.error||'Property not found');setItem(b.data)}
   catch(e){setError(e instanceof Error?e.message:'Unable to load property')}
  }
- useEffect(()=>{if(location.pathname==='/search')void search();else if(location.pathname.startsWith('/property/')){const id=location.pathname.split('/').pop();if(id){setBusy(true);fetch(API+'/properties/'+id+(demo?'?includeDemo=true':'')).then(async r=>{const b=await r.json();if(!r.ok)throw new Error(b.error||'Not found');setItem(b.data)}).catch(e=>setError(e.message)).finally(()=>setBusy(false))}}},[])
+ useEffect(()=>{
+  const loadRoute = () => {
+   const path = location.pathname
+   if(path==='/search') { void search(); return }
+   if(path.startsWith('/property/')) {
+    const id = path.split('/').pop()
+    if(!id) return
+    setPage('detail'); setBusy(true); setError(''); setItem(null)
+    fetch(API+'/properties/'+id+(demo?'?includeDemo=true':''))
+     .then(async r=>{const b=await r.json();if(!r.ok)throw new Error(b.error||'Not found');setItem(b.data)})
+     .catch(e=>setError(e instanceof Error?e.message:'Unable to load property'))
+     .finally(()=>setBusy(false))
+    return
+   }
+   setPage('home'); setItem(null); setError('')
+  }
+  const handlePopState = () => loadRoute()
+  window.addEventListener('popstate',handlePopState)
+  if(location.pathname==='/search'||location.pathname.startsWith('/property/')) loadRoute()
+  return ()=>window.removeEventListener('popstate',handlePopState)
+ },[])
  const shown=[...rows].sort((a,b)=>sort==='price'?(Number(a.starting_monthly_amount??Infinity)-Number(b.starting_monthly_amount??Infinity)):0)
  return <div className="roomler-public">
   <header className="public-header"><a className="public-logo" href="/"><img src="/roomler-logo.png" alt="Roomler — Your space. Your vibe."/></a><form className="header-search" onSubmit={e=>{e.preventDefault();void search()}}><input aria-label="City or locality" placeholder="Select city or locality" value={city} onChange={e=>setCity(e.target.value)}/><input aria-label="Describe your stay" placeholder="Describe the stay you need…" value={query} onChange={e=>setQuery(e.target.value)}/><button>⌕</button></form><nav><span className="nav-soon">Login · Soon</span><span className="nav-soon post-property">Post Property · Soon</span></nav></header>
