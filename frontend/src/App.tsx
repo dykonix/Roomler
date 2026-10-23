@@ -44,6 +44,26 @@ type ApiProperty = {
 }
 
 
+
+type PropertyDetail = {
+  id: string; title: string; description: string; property_type: 'PG' | 'Flat';
+  city_id: string; city: string | null; locality_id: string | null; locality: string | null;
+  owner_id: string; owner_name: string | null; address: string | null; google_maps_url: string | null;
+  gender_eligibility: string | null; couples_allowed: boolean | null; co_ed_rooms_allowed: boolean | null;
+  cooking_allowed: boolean | null; house_rules_notes: string | null; listing_status: string;
+  verification_status: string; listing_source: string; data_label: string; updated_at: string;
+  security_deposit_basis: string | null; security_deposit_amount: string | number | null;
+  security_deposit_refund_policy: string | null; notice_period_value: string | number | null;
+  notice_period_unit: string | null; electricity_billing_mode: string | null;
+  electricity_rate_per_unit: string | number | null; four_wheeler_parking_spaces: number | null;
+  two_wheeler_parking_spaces: number | null; images: { id: string; image_url: string; image_label: string | null; alt_text: string | null; is_cover: boolean }[];
+}
+type PropertyEditValues = {
+  title: string; description: string; propertyType: 'PG' | 'Flat'; cityId: string;
+  localityId: string; ownerId: string; address: string; googleMapsUrl: string;
+  genderEligibility: string; couplesAllowed: string; coEdRoomsAllowed: string; cookingAllowed: string;
+}
+
 type AmenityScope = 'property' | 'floor' | 'room'
 type AmenityOption = { attribute_key: string; display_name: string; scope: AmenityScope }
 type AmenityValue = { key: string; value: 'yes' | 'no' | 'unknown' }
@@ -136,6 +156,13 @@ function App() {
   const [statusFilter, setStatusFilter] = useState('All statuses')
   const [typeFilter, setTypeFilter] = useState('All types')
   const [showAddForm, setShowAddForm] = useState(false)
+  const [openActionId, setOpenActionId] = useState<string | null>(null)
+  const [detailProperty, setDetailProperty] = useState<PropertyDetail | null>(null)
+  const [editingProperty, setEditingProperty] = useState<PropertyDetail | null>(null)
+  const [editValues, setEditValues] = useState<PropertyEditValues | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Property | null>(null)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState('')
   const [toast, setToast] = useState('')
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
@@ -366,6 +393,102 @@ function App() {
     return () => { cancelled = true }
   }, [])
 
+
+  async function loadPropertyDetail(id: string): Promise<PropertyDetail> {
+    const response = await fetch(`http://localhost:3001/api/admin/properties/${id}`)
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error ?? `Could not load property (${response.status}).`)
+    return result.data as PropertyDetail
+  }
+
+  async function openPropertyDetails(property: Property) {
+    setOpenActionId(null); setActionError(''); setActionBusy(true)
+    try { setDetailProperty(await loadPropertyDetail(property.id)) }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to load property details.') }
+    finally { setActionBusy(false) }
+  }
+
+  async function openPropertyEdit(property: Property) {
+    setOpenActionId(null); setActionError(''); setActionBusy(true)
+    try {
+      const detail = await loadPropertyDetail(property.id)
+      setEditingProperty(detail)
+      setEditValues({
+        title: detail.title, description: detail.description ?? '', propertyType: detail.property_type,
+        cityId: detail.city_id, localityId: detail.locality_id ?? '', ownerId: detail.owner_id,
+        address: detail.address ?? '', googleMapsUrl: detail.google_maps_url ?? '',
+        genderEligibility: detail.gender_eligibility ?? 'unknown',
+        couplesAllowed: detail.couples_allowed === null ? 'unknown' : detail.couples_allowed ? 'yes' : 'no',
+        coEdRoomsAllowed: detail.co_ed_rooms_allowed === null ? 'unknown' : detail.co_ed_rooms_allowed ? 'yes' : 'no',
+        cookingAllowed: detail.cooking_allowed === null ? 'unknown' : detail.cooking_allowed ? 'yes' : 'no',
+      })
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to load property for editing.') }
+    finally { setActionBusy(false) }
+  }
+
+  async function refreshProperties() {
+    const response = await fetch('http://localhost:3001/api/admin/properties')
+    const result = await response.json()
+    if (!response.ok || !Array.isArray(result.data)) throw new Error(result.error ?? 'Unable to refresh properties.')
+    setProperties(result.data.map(mapApiProperty))
+  }
+
+  async function changePropertyStatus(property: Property, status: 'draft' | 'published' | 'paused' | 'removed') {
+    setOpenActionId(null); setActionBusy(true); setActionError('')
+    try {
+      const response = await fetch(`http://localhost:3001/api/admin/properties/${property.id}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error ?? `Status update failed (${response.status}).`)
+      await refreshProperties()
+      showDemoToast(`Listing status changed to ${status}.${status === 'published' ? ' Verification remains unchanged.' : ''}`)
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to change listing status.') }
+    finally { setActionBusy(false) }
+  }
+
+  async function savePropertyEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editingProperty || !editValues) return
+    setActionBusy(true); setActionError('')
+    const toNullableBoolean = (value: string) => value === 'unknown' ? null : value === 'yes'
+    try {
+      const response = await fetch(`http://localhost:3001/api/admin/properties/${editingProperty.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editValues.title.trim(), description: editValues.description, propertyType: editValues.propertyType,
+          cityId: editValues.cityId, localityId: editValues.localityId || null, ownerId: editValues.ownerId,
+          address: editValues.address.trim() || null, googleMapsUrl: editValues.googleMapsUrl.trim() || null,
+          genderEligibility: editValues.genderEligibility === 'unknown' ? null : editValues.genderEligibility,
+          couplesAllowed: toNullableBoolean(editValues.couplesAllowed),
+          coEdRoomsAllowed: toNullableBoolean(editValues.coEdRoomsAllowed),
+          cookingAllowed: toNullableBoolean(editValues.cookingAllowed),
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error ?? `Save failed (${response.status}).`)
+      setEditingProperty(null); setEditValues(null)
+      await refreshProperties()
+      showDemoToast('Property details updated. Existing rooms, prices and photos were preserved.')
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to update property.') }
+    finally { setActionBusy(false) }
+  }
+
+  async function deleteProperty() {
+    if (!deleteTarget) return
+    setActionBusy(true); setActionError('')
+    try {
+      const response = await fetch(`http://localhost:3001/api/admin/properties/${deleteTarget.id}`, { method: 'DELETE' })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error ?? `Delete failed (${response.status}).`)
+      const title = deleteTarget.title
+      setDeleteTarget(null)
+      await refreshProperties()
+      showDemoToast(`Deleted "${title}" from the database. Associated S3 files may need cleanup.`)
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to delete property.') }
+    finally { setActionBusy(false) }
+  }
+
   function showDemoToast(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(''), 3200)
@@ -490,7 +613,15 @@ function App() {
                         <td><StatusPill status={property.status} /></td>
                         <td><VerificationPill status={property.verification} /></td>
                         <td><span className="updated-date">{property.updated}</span></td>
-                        <td><button className="row-action" type="button" aria-label={`More actions for ${property.title}`} onClick={() => showDemoToast('Property actions will be enabled after the API is connected.')}>···</button></td>
+                        <td className="action-cell"><button className="row-action" type="button" aria-label={`Actions for ${property.title}`} aria-expanded={openActionId === property.id} onClick={() => setOpenActionId(openActionId === property.id ? null : property.id)}>···</button>
+                          {openActionId === property.id && <div className="action-menu" role="menu">
+                            <button type="button" role="menuitem" onClick={() => void openPropertyDetails(property)}>View details</button>
+                            <button type="button" role="menuitem" onClick={() => void openPropertyEdit(property)}>Edit property</button>
+                            <div className="action-menu-label">Change listing status</div>
+                            {(['draft','published','paused','removed'] as const).filter(status => status !== property.status.toLowerCase()).map(status => <button key={status} type="button" role="menuitem" onClick={() => void changePropertyStatus(property, status)}>Set {status}</button>)}
+                            <div className="action-menu-divider" />
+                            <button className="danger-action" type="button" role="menuitem" onClick={() => { setOpenActionId(null); setActionError(''); setDeleteTarget(property) }}>Delete property…</button>
+                          </div>}</td>
                       </tr>
                     ))}
                     {!loading && !loadError && filteredProperties.length === 0 && (
@@ -529,6 +660,74 @@ function App() {
           </section>
         )}
       </main>
+
+
+      {actionError && !editingProperty && !deleteTarget && !detailProperty && <div className="action-error-banner" role="alert">{actionError}<button type="button" onClick={() => setActionError('')} aria-label="Dismiss error">×</button></div>}
+
+      {detailProperty && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDetailProperty(null) }}>
+        <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="property-details-title">
+          <div className="modal-heading"><div><div className="eyebrow">PROPERTY RECORD · VIEW ONLY</div><h2 id="property-details-title">{detailProperty.title}</h2></div><button className="modal-close" type="button" onClick={() => setDetailProperty(null)} aria-label="Close details">×</button></div>
+          <div className="modal-notice">Listing status and verification status are separate. Viewing this record does not verify its claims.</div>
+          <dl className="detail-grid">
+            <div><dt>Property ID</dt><dd>{detailProperty.id}</dd></div><div><dt>Property type</dt><dd>{detailProperty.property_type}</dd></div>
+            <div><dt>City</dt><dd>{detailProperty.city ?? 'Unknown'}</dd></div><div><dt>Locality</dt><dd>{detailProperty.locality ?? 'Unknown'}</dd></div>
+            <div><dt>Owner</dt><dd>{detailProperty.owner_name ?? 'Unknown'}</dd></div><div><dt>Listing status</dt><dd>{detailProperty.listing_status}</dd></div>
+            <div><dt>Verification</dt><dd>{detailProperty.verification_status.replaceAll('_',' ')}</dd></div><div><dt>Data label</dt><dd>{detailProperty.data_label.replaceAll('_',' ')}</dd></div>
+            <div><dt>Occupancy eligibility</dt><dd>{detailProperty.gender_eligibility ?? 'Unknown'}</dd></div>
+            <div><dt>Couples allowed</dt><dd>{detailProperty.couples_allowed === null ? 'Unknown' : detailProperty.couples_allowed ? 'Yes' : 'No'}</dd></div>
+            <div><dt>Co-ed rooms</dt><dd>{detailProperty.co_ed_rooms_allowed === null ? 'Unknown' : detailProperty.co_ed_rooms_allowed ? 'Yes' : 'No'}</dd></div>
+            <div><dt>Cooking allowed</dt><dd>{detailProperty.cooking_allowed === null ? 'Unknown' : detailProperty.cooking_allowed ? 'Yes' : 'No'}</dd></div>
+            <div className="detail-full"><dt>Address</dt><dd>{detailProperty.address ?? 'Not provided'}</dd></div>
+            <div className="detail-full"><dt>Description</dt><dd>{detailProperty.description || 'Not provided'}</dd></div>
+            <div><dt>Security deposit</dt><dd>{detailProperty.security_deposit_basis?.replaceAll('_',' ') ?? 'Unknown'}{detailProperty.security_deposit_amount != null ? ` · ₹${Number(detailProperty.security_deposit_amount).toLocaleString('en-IN')}` : ''}</dd></div>
+            <div><dt>Notice period</dt><dd>{detailProperty.notice_period_value == null ? 'Unknown' : `${detailProperty.notice_period_value} ${detailProperty.notice_period_unit ?? 'units'}`}</dd></div>
+            <div><dt>Electricity</dt><dd>{detailProperty.electricity_billing_mode?.replaceAll('_',' ') ?? 'Unknown'}</dd></div>
+            <div><dt>Photos</dt><dd>{detailProperty.images?.length ?? 0} stored photo record(s)</dd></div>
+          </dl>
+          <div className="modal-footer"><button className="secondary-button" type="button" onClick={() => setDetailProperty(null)}>Close</button><button className="primary-button" type="button" onClick={() => { const selected = properties.find(p => p.id === detailProperty.id); setDetailProperty(null); if (selected) void openPropertyEdit(selected) }}>Edit property</button></div>
+        </section>
+      </div>}
+
+      {editingProperty && editValues && <div className="modal-backdrop" role="presentation">
+        <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
+          <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
+          <div className="modal-notice">This first edit pass updates property-level fields only. Existing floors, rooms, beds, pricing, charges, amenities and photos are preserved and are not editable here yet.</div>
+          <form onSubmit={savePropertyEdit}>
+            <label className="form-field">Property title *<input required minLength={3} maxLength={150} value={editValues.title} onChange={e => setEditValues({...editValues,title:e.target.value})}/></label>
+            <label className="form-field">Description<textarea rows={4} maxLength={10000} value={editValues.description} onChange={e => setEditValues({...editValues,description:e.target.value})}/></label>
+            <div className="form-row">
+              <label className="form-field">City *<select required value={editValues.cityId} onChange={e => setEditValues({...editValues,cityId:e.target.value,localityId:''})}><option value="">Select city</option>{formOptions.cities.map(city=><option key={city.id} value={city.id}>{city.name}, {city.state_name}</option>)}</select></label>
+              <label className="form-field">Property type<select value={editValues.propertyType} onChange={e => setEditValues({...editValues,propertyType:e.target.value as 'PG'|'Flat'})}><option value="PG">PG</option><option value="Flat">Flat</option></select></label>
+            </div>
+            <div className="form-row">
+              <label className="form-field">Locality<select value={editValues.localityId} onChange={e=>setEditValues({...editValues,localityId:e.target.value})}><option value="">Unknown / not specified</option>{formOptions.localities.filter(l=>l.city_id===editValues.cityId).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+              <label className="form-field">Owner *<select required value={editValues.ownerId} onChange={e=>setEditValues({...editValues,ownerId:e.target.value})}><option value="">Select owner</option>{formOptions.owners.map(owner=><option key={owner.id} value={owner.id}>{owner.name}</option>)}</select></label>
+            </div>
+            <label className="form-field">Address<input value={editValues.address} onChange={e=>setEditValues({...editValues,address:e.target.value})}/></label>
+            <label className="form-field">Google Maps URL<input type="url" value={editValues.googleMapsUrl} onChange={e=>setEditValues({...editValues,googleMapsUrl:e.target.value})}/></label>
+            <div className="form-row">
+              <label className="form-field">Occupancy eligibility<select value={editValues.genderEligibility} onChange={e=>setEditValues({...editValues,genderEligibility:e.target.value})}><option value="unknown">Unknown</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Unisex">Unisex</option></select></label>
+              <label className="form-field">Couples allowed<select value={editValues.couplesAllowed} onChange={e=>setEditValues({...editValues,couplesAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+            </div>
+            <div className="form-row">
+              <label className="form-field">Co-ed rooms allowed<select value={editValues.coEdRoomsAllowed} onChange={e=>setEditValues({...editValues,coEdRoomsAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+              <label className="form-field">Cooking allowed<select value={editValues.cookingAllowed} onChange={e=>setEditValues({...editValues,cookingAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+            </div>
+            {actionError && <p className="form-error" role="alert">{actionError}</p>}
+            <div className="modal-footer"><button className="secondary-button" type="button" disabled={actionBusy} onClick={()=>{setEditingProperty(null);setEditValues(null);setActionError('')}}>Cancel</button><button className="primary-button" type="submit" disabled={actionBusy}>{actionBusy ? 'Saving…' : 'Save changes'}</button></div>
+          </form>
+        </section>
+      </div>}
+
+      {deleteTarget && <div className="modal-backdrop" role="presentation">
+        <section className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-property-title">
+          <div className="modal-heading"><div><div className="eyebrow">DESTRUCTIVE ACTION</div><h2 id="delete-property-title">Delete property?</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={()=>setDeleteTarget(null)} aria-label="Cancel delete">×</button></div>
+          <p>You are about to permanently delete <strong>{deleteTarget.title}</strong> and its linked database records. This cannot be undone.</p>
+          <p className="delete-warning">Stored S3 image files are not deleted by this operation and may need separate cleanup.</p>
+          {actionError && <p className="form-error" role="alert">{actionError}</p>}
+          <div className="modal-footer"><button className="secondary-button" type="button" disabled={actionBusy} onClick={()=>{setDeleteTarget(null);setActionError('')}}>Cancel</button><button className="danger-button" type="button" disabled={actionBusy} onClick={()=>void deleteProperty()}>{actionBusy ? 'Deleting…' : 'Delete permanently'}</button></div>
+        </section>
+      </div>}
 
       {showAddForm && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingProperty) setShowAddForm(false) }}>
