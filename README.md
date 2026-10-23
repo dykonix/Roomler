@@ -45,7 +45,7 @@ PostgreSQL
 
 Prerequisites: Node.js 22+, npm, PostgreSQL 14+.
 
-1. Create a **new, empty** PostgreSQL database for Roomler. Do not run the clean-install schema against an existing or unrelated database.
+1. Create a **new, empty** PostgreSQL database for Roomler. Do not run the clean-install schema against an existing or unrelated database. Set DATABASE_URL in your shell for the psql commands below, or export it from your local environment file; do not commit credentials.
 2. Apply the schema and seed in order:
 
    ```bash
