@@ -17,7 +17,7 @@ type Listing = {
 }
 const API = 'http://localhost:3001/api/public'
 const initialParams = new URLSearchParams(location.search)
-const demo = initialParams.get('demo') === 'true' || initialParams.get('includeDemo') === 'true'
+const demo = import.meta.env.DEV || initialParams.get('demo') === 'true' || initialParams.get('includeDemo') === 'true'
 const money = (v: number | string | null | undefined, currency = 'INR') => v == null || v === '' ? 'Price not provided' : new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Number(v))
 const yesNo = (v: boolean | null | undefined) => v === true ? 'Yes' : v === false ? 'No' : 'Not confirmed'
 
