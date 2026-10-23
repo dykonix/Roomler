@@ -625,8 +625,17 @@ app.get('/api/public/properties/:id', async (req, res) => {
     const rooms = await pool.query(`
       SELECT r.id, r.room_label, r.room_type, r.max_occupants, r.furnishing_status,
         r.room_status, r.attached_bathroom, r.wifi_available_in_room,
-        COALESCE(prices.items, '[]'::json) AS prices
+        f.floor_label, f.floor_number,
+        COALESCE(prices.items, '[]'::json) AS prices,
+        COALESCE(charges.items, '[]'::json) AS charges
       FROM rooms r JOIN property_floors f ON f.id=r.floor_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('id',rc.id,'name',rc.charge_name,'amount',rc.amount,
+          'currency',rc.currency,'basis',rc.charge_basis,'mandatory',rc.mandatory,'description',rc.description)
+          ORDER BY rc.charge_name) AS items
+        FROM room_charges rc WHERE rc.room_id=r.id
+          AND rc.data_label IN ('real_submitted','synthetic_demo')
+      ) charges ON TRUE
       LEFT JOIN LATERAL (
         SELECT json_agg(json_build_object('amount',rp.amount,'currency',rp.currency,
           'rent_basis',rp.rent_basis,'stay_period',rp.stay_period)
