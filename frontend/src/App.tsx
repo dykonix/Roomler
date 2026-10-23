@@ -172,6 +172,7 @@ function App() {
   const [detailProperty, setDetailProperty] = useState<PropertyDetail | null>(null)
   const [editingProperty, setEditingProperty] = useState<PropertyDetail | null>(null)
   const [editValues, setEditValues] = useState<PropertyEditValues | null>(null)
+  const [inventoryValues, setInventoryValues] = useState<any>(null)
   const [deleteTarget, setDeleteTarget] = useState<Property | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -429,6 +430,23 @@ function App() {
       setFormOptions(options)
       const detail = await loadPropertyDetail(property.id)
       setEditingProperty(detail)
+      setInventoryValues({
+        propertyAmenities: (detail.property_amenities ?? []).map(a => ({ key: a.key, value: a.value })),
+        floors: (detail.floors ?? []).map(f => ({
+          id: f.id, number: String(f.number), label: f.label, notes: f.notes ?? '',
+          amenities: (f.amenities ?? []).map(a => ({ key: a.key, value: a.value })),
+          rooms: (f.rooms ?? []).map(r => ({
+            id: r.id, label: r.label, type: r.type, maxOccupants: String(r.maxOccupants),
+            status: r.status ?? 'unknown', furnishingStatus: r.furnishingStatus ?? '',
+            attachedBathroom: r.attachedBathroom == null ? 'unknown' : r.attachedBathroom ? 'yes' : 'no',
+            wifiAvailableInRoom: r.wifiAvailableInRoom == null ? 'unknown' : r.wifiAvailableInRoom ? 'yes' : 'no',
+            notes: r.notes ?? '', amenities: (r.amenities ?? []).map(a => ({ key: a.key, value: a.value })),
+            offers: (r.offers ?? []).map(o => ({ id: o.id, amount: String(o.amount), rentBasis: o.rentBasis, foodOption: o.foodOption ?? 'unknown', status: o.status ?? 'unknown' })),
+            charges: (r.charges ?? []).map(ch => ({ id: ch.id, name: ch.name, amount: String(ch.amount), basis: ch.basis, mandatory: ch.mandatory ?? false, description: ch.description ?? '' })),
+            beds: r.beds ?? [],
+          })),
+        })),
+      })
       setEditValues({
         title: detail.title, description: detail.description ?? '', propertyType: detail.property_type,
         cityId: detail.city_id, localityId: detail.locality_id ?? '', ownerId: detail.owner_id,
@@ -483,9 +501,28 @@ function App() {
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error ?? `Save failed (${response.status}).`)
-      setEditingProperty(null); setEditValues(null)
+      const inventoryResponse = await fetch(`http://localhost:3001/api/admin/properties/${editingProperty.id}/inventory`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyAmenities: inventoryValues.propertyAmenities,
+          floors: inventoryValues.floors.map((floor: any) => ({
+            ...floor, number: Number(floor.number),
+            rooms: floor.rooms.map((room: any) => ({
+              ...room, maxOccupants: Number(room.maxOccupants),
+              furnishingStatus: room.furnishingStatus || null,
+              attachedBathroom: room.attachedBathroom === 'unknown' ? null : room.attachedBathroom === 'yes',
+              wifiAvailableInRoom: room.wifiAvailableInRoom === 'unknown' ? null : room.wifiAvailableInRoom === 'yes',
+              offers: room.offers.map((offer: any) => ({ ...offer, amount: Number(offer.amount) })),
+              charges: room.charges.map((charge: any) => ({ ...charge, amount: Number(charge.amount) })),
+            })),
+          })),
+        }),
+      })
+      const inventoryResult = await inventoryResponse.json()
+      if (!inventoryResponse.ok) throw new Error(inventoryResult.error ?? `Inventory save failed (${inventoryResponse.status}).`)
+      setEditingProperty(null); setEditValues(null); setInventoryValues(null)
       await refreshProperties()
-      showDemoToast('Property details updated. Existing rooms, prices and photos were preserved.')
+      showDemoToast('Property details, inventory and amenities saved. Omitted records were preserved.')
     } catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to update property.') }
     finally { setActionBusy(false) }
   }
