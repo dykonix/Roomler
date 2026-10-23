@@ -56,7 +56,19 @@ type PropertyDetail = {
   security_deposit_refund_policy: string | null; notice_period_value: string | number | null;
   notice_period_unit: string | null; electricity_billing_mode: string | null;
   electricity_rate_per_unit: string | number | null; four_wheeler_parking_spaces: number | null;
-  two_wheeler_parking_spaces: number | null; images: { id: string; image_url: string; image_label: string | null; alt_text: string | null; is_cover: boolean }[];
+  two_wheeler_parking_spaces: number | null;
+  property_amenities: { key: string; value: 'yes' | 'no' | 'unknown'; verification_status?: string; source_note?: string | null }[];
+  floors: { id: string; number: number; label: string; notes: string | null;
+    amenities: { key: string; value: 'yes' | 'no' | 'unknown'; verification_status?: string; source_note?: string | null }[];
+    rooms: { id: string; label: string; type: 'single' | 'shared'; maxOccupants: number; status: string;
+      furnishingStatus: string | null; attachedBathroom: boolean | null; wifiAvailableInRoom: boolean | null; notes: string | null;
+      amenities: { key: string; value: 'yes' | 'no' | 'unknown'; verification_status?: string; source_note?: string | null }[];
+      offers: { id: string; amount: string | number; currency: string; rentBasis: string; stayPeriod: string; foodOption: string; status: string }[];
+      charges: { id: string; name: string; amount: string | number; currency: string; basis: string; mandatory: boolean | null; description: string | null }[];
+      beds: { id: string; label: string; type: string; status: string }[];
+    }[];
+  }[];
+  images: { id: string; image_url: string; image_label: string | null; alt_text: string | null; is_cover: boolean }[];
 }
 type PropertyEditValues = {
   title: string; description: string; propertyType: 'PG' | 'Flat'; cityId: string;
