@@ -63,4 +63,4 @@ Set numeric targets only after running a labeled set and establishing a baseline
 
 ## Current conclusion
 
-Implementation and documentation are committed to a draft feature branch. No completed CI result or live database/API execution has been verified. Keep the PR in draft until the checks are run and actual results are recorded.
+Implementation and documentation are committed to a draft feature branch. CI run #20 passed frontend build/lint and backend typecheck on an earlier revision; the latest commits still need a fresh run. Live database/API and browser execution have not been verified. Keep the PR in draft until the latest checks and actual results are recorded.
