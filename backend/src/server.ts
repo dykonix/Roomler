@@ -62,7 +62,7 @@ async function parseRoomlerSearch(city: string, query: string): Promise<ParsedRo
     console.error('Gemini search extraction failed:', response.status, detail.slice(0, 500));
     throw new Error('Gemini could not process this search right now.');
   }
-  const payload = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] }[] }[] };
+  const payload = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
   const text = payload.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim();
   if (!text) throw new Error('Gemini returned an empty search result.');
   const raw = JSON.parse(text) as Record<string, unknown>;
