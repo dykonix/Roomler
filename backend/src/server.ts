@@ -302,6 +302,143 @@ app.post('/api/admin/properties', async (req, res) => {
   }
 });
 
+
+/**
+ * Public property search.
+ * Production results are limited to published real submissions. Synthetic records
+ * are available only in development with ?includeDemo=true and remain labelled.
+ */
+app.get('/api/public/properties', async (req, res) => {
+  const includeDemo = process.env.NODE_ENV !== 'production' && req.query.includeDemo === 'true';
+  const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+  const locality = typeof req.query.locality === 'string' ? req.query.locality.trim() : '';
+  const propertyType = typeof req.query.type === 'string' ? req.query.type.trim() : '';
+  const maxRentRaw = typeof req.query.maxRent === 'string' ? req.query.maxRent : '';
+  const maxRent = maxRentRaw ? Number(maxRentRaw) : null;
+  const wifi = req.query.wifi === 'true';
+  const cooking = req.query.cooking === 'true';
+  if (propertyType && !['PG', 'Flat'].includes(propertyType)) {
+    res.status(400).json({ error: 'type must be PG or Flat.' }); return;
+  }
+  if (maxRent !== null && (!Number.isFinite(maxRent) || maxRent < 0)) {
+    res.status(400).json({ error: 'maxRent must be a non-negative number.' }); return;
+  }
+  try {
+    const result = await pool.query(`
+      SELECT p.id, p.title, p.description, p.property_type, p.gender_eligibility,
+        p.couples_allowed, p.co_ed_rooms_allowed, p.cooking_allowed,
+        p.security_deposit_basis, p.security_deposit_amount, p.security_deposit_refund_policy,
+        p.notice_period_value, p.notice_period_unit, p.electricity_billing_mode,
+        p.electricity_rate_per_unit, p.listing_status, p.verification_status,
+        p.data_label, c.canonical_name AS city, l.canonical_name AS locality,
+        price.amount AS starting_monthly_amount, price.currency AS starting_monthly_currency,
+        COALESCE(image_data.images, '[]'::json) AS images,
+        wifi.value_boolean AS wifi_available, wifi.value_state AS wifi_value_state
+      FROM properties p
+      JOIN cities c ON c.id = p.city_id
+      LEFT JOIN localities l ON l.id = p.locality_id
+      LEFT JOIN LATERAL (
+        SELECT rp.amount, rp.currency FROM property_floors pf
+        JOIN rooms r ON r.floor_id = pf.id JOIN room_prices rp ON rp.room_id = r.id
+        WHERE pf.property_id = p.id AND rp.is_current = TRUE AND rp.stay_period = 'monthly'
+          AND (rp.valid_from IS NULL OR rp.valid_from <= CURRENT_DATE)
+          AND (rp.valid_to IS NULL OR rp.valid_to >= CURRENT_DATE)
+        ORDER BY rp.amount ASC LIMIT 1
+      ) price ON TRUE
+      LEFT JOIN property_attribute_values wifi
+        ON wifi.property_id = p.id AND wifi.attribute_key = 'wifi_available'
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('id', pi.id, 'image_url', pi.image_url,
+          'image_label', pi.image_label, 'alt_text', pi.alt_text, 'is_cover', pi.is_cover)
+          ORDER BY pi.is_cover DESC, pi.display_order ASC) AS images
+        FROM property_images pi WHERE pi.property_id = p.id
+      ) image_data ON TRUE
+      WHERE (
+        (p.listing_status = 'published' AND p.data_label = 'real_submitted')
+        OR ($1::boolean AND p.data_label = 'synthetic_demo')
+      )
+      AND ($2 = '' OR lower(c.canonical_name) = lower($2))
+      AND ($3 = '' OR lower(COALESCE(l.canonical_name,'')) LIKE '%' || lower($3) || '%')
+      AND ($4 = '' OR p.property_type = $4)
+      AND ($5::numeric IS NULL OR price.amount <= $5)
+      AND (NOT $6::boolean OR wifi.value_state = 'known' AND wifi.value_boolean = TRUE)
+      AND (NOT $7::boolean OR COALESCE(p.cooking_allowed,
+        (SELECT ca.value_boolean FROM property_attribute_values ca
+         WHERE ca.property_id=p.id AND ca.attribute_key='cooking_allowed'
+           AND ca.value_state='known' LIMIT 1), FALSE) = TRUE)
+      ORDER BY price.amount ASC NULLS LAST, p.updated_at DESC
+      LIMIT 100
+    `, [includeDemo, city, locality, propertyType, maxRent, wifi, cooking]);
+    res.json({ data: result.rows, count: result.rows.length, includesSyntheticDemo: includeDemo });
+  } catch (error) {
+    console.error('Public property search failed:', error);
+    res.status(500).json({ error: 'Unable to search properties.' });
+  }
+});
+
+app.get('/api/public/properties/:id', async (req, res) => {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.id)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+  try {
+    const includeDemo = process.env.NODE_ENV !== 'production' && req.query.includeDemo === 'true';
+    const result = await pool.query(`
+      SELECT p.id, p.title, p.description, p.property_type, p.address, p.google_maps_url,
+        p.gender_eligibility, p.couples_allowed, p.co_ed_rooms_allowed, p.cooking_allowed,
+        p.security_deposit_basis, p.security_deposit_amount, p.security_deposit_refund_policy,
+        p.notice_period_value, p.notice_period_unit, p.electricity_billing_mode,
+        p.electricity_rate_per_unit, p.listing_status, p.verification_status, p.data_label,
+        c.canonical_name AS city, l.canonical_name AS locality,
+        price.amount AS starting_monthly_amount, price.currency AS starting_monthly_currency,
+        wifi.value_boolean AS wifi_available, wifi.value_state AS wifi_value_state,
+        COALESCE(image_data.images, '[]'::json) AS images
+      FROM properties p JOIN cities c ON c.id=p.city_id
+      LEFT JOIN localities l ON l.id=p.locality_id
+      LEFT JOIN LATERAL (
+        SELECT rp.amount, rp.currency FROM property_floors pf
+        JOIN rooms r ON r.floor_id=pf.id JOIN room_prices rp ON rp.room_id=r.id
+        WHERE pf.property_id=p.id AND rp.is_current=TRUE AND rp.stay_period='monthly'
+          AND (rp.valid_from IS NULL OR rp.valid_from<=CURRENT_DATE)
+          AND (rp.valid_to IS NULL OR rp.valid_to>=CURRENT_DATE)
+        ORDER BY rp.amount ASC LIMIT 1
+      ) price ON TRUE
+      LEFT JOIN property_attribute_values wifi
+        ON wifi.property_id=p.id AND wifi.attribute_key='wifi_available'
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('id',pi.id,'image_url',pi.image_url,
+          'image_label',pi.image_label,'alt_text',pi.alt_text,'is_cover',pi.is_cover)
+          ORDER BY pi.is_cover DESC,pi.display_order ASC) AS images
+        FROM property_images pi WHERE pi.property_id=p.id
+      ) image_data ON TRUE
+      WHERE p.id=$1::uuid AND (
+        (p.listing_status='published' AND p.data_label='real_submitted')
+        OR ($2::boolean AND p.data_label='synthetic_demo')
+      )
+    `, [req.params.id, includeDemo]);
+    if (!result.rows.length) { res.status(404).json({ error: 'Property not found.' }); return; }
+    const rooms = await pool.query(`
+      SELECT r.id, r.room_label, r.room_type, r.max_occupants, r.furnishing_status,
+        r.room_status, r.attached_bathroom, r.wifi_available_in_room,
+        COALESCE(prices.items, '[]'::json) AS prices
+      FROM rooms r JOIN property_floors f ON f.id=r.floor_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('amount',rp.amount,'currency',rp.currency,
+          'rent_basis',rp.rent_basis,'stay_period',rp.stay_period)
+          ORDER BY rp.amount ASC) AS items FROM room_prices rp
+        WHERE rp.room_id=r.id AND rp.is_current=TRUE
+          AND (rp.valid_from IS NULL OR rp.valid_from<=CURRENT_DATE)
+          AND (rp.valid_to IS NULL OR rp.valid_to>=CURRENT_DATE)
+      ) prices ON TRUE
+      WHERE f.property_id=$1::uuid ORDER BY r.room_label
+    `, [req.params.id]);
+    res.json({ data: { ...result.rows[0], rooms: rooms.rows } });
+  } catch (error) {
+    console.error('Public property detail failed:', error);
+    res.status(500).json({ error: 'Unable to load property details.' });
+  }
+});
+
 // Admin property listing
 app.get('/api/admin/properties', async (_req, res) => {
   try {
