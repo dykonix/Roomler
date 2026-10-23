@@ -411,6 +411,10 @@ function App() {
   async function openPropertyEdit(property: Property) {
     setOpenActionId(null); setActionError(''); setActionBusy(true)
     try {
+      const optionsResponse = await fetch('http://localhost:3001/api/admin/form-options')
+      const options = await optionsResponse.json() as FormOptions
+      if (!optionsResponse.ok) throw new Error('Could not load cities, localities and owners for editing.')
+      setFormOptions(options)
       const detail = await loadPropertyDetail(property.id)
       setEditingProperty(detail)
       setEditValues({
@@ -568,7 +572,7 @@ function App() {
                   {query && <button type="button" className="clear-search" onClick={() => setQuery('')} aria-label="Clear search">×</button>}
                 </label>
                 <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by listing status">
-                  <option>All statuses</option><option>Published</option><option>Draft</option><option>Paused</option>
+                  <option>All statuses</option><option>Published</option><option>Draft</option><option>Paused</option><option>Removed</option>
                 </select>
                 <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} aria-label="Filter by property type">
                   <option>All types</option><option>PG</option><option>Flat</option>
