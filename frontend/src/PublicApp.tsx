@@ -40,13 +40,42 @@ export default function PublicApp() {
  const [sort,setSort] = useState('price')
  async function search() {
   setBusy(true); setError(''); setNotice('')
+  let effectiveType = type
+  let effectiveBudget = budget
+  let effectiveWifi = wifi
+  let effectiveCooking = cooking
+  let effectiveGender = ''
+  if(query.trim()) {
+   if(!city.trim()) {
+    setNotice('Choose a city to use natural-language search. You can still use the structured filters below.')
+   } else {
+    try {
+     const parsedResponse = await fetch(API+'/parse-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city: city.trim(), query: query.trim() })
+     })
+     const parsedBody = await parsedResponse.json()
+     if(!parsedResponse.ok) throw new Error(parsedBody.error || 'Could not interpret the search')
+     const f = parsedBody.filters || {}
+     if(f.propertyType === 'PG' || f.propertyType === 'Flat') effectiveType = f.propertyType
+     if(typeof f.maxRent === 'number' && Number.isFinite(f.maxRent)) effectiveBudget = String(f.maxRent)
+     if(typeof f.wifi === 'boolean') effectiveWifi = f.wifi
+     if(typeof f.cookingAllowed === 'boolean') effectiveCooking = f.cookingAllowed
+     if(f.genderEligibility === 'Girls' || f.genderEligibility === 'Boys' || f.genderEligibility === 'Unisex') effectiveGender = f.genderEligibility
+     setType(effectiveType); setBudget(effectiveBudget); setWifi(effectiveWifi); setCooking(effectiveCooking)
+    } catch {
+     setNotice('AI search is unavailable right now. Your text was not used as a filter; results use the structured filters currently selected.')
+    }
+   }
+  }
   const p = new URLSearchParams()
   if(city.trim()) p.set('city', city.trim())
-  if(query.trim()) setNotice('Natural-language preference matching is not implemented yet. The text was not used to filter listings; use location and structured filters below.')
-  if(type==='PG'||type==='Flat') p.set('type',type)
-  if(budget) p.set('maxRent',budget)
-  if(wifi) p.set('wifi','true')
-  if(cooking) p.set('cooking','true')
+  if(effectiveType==='PG'||effectiveType==='Flat') p.set('type',effectiveType)
+  if(effectiveBudget) p.set('maxRent',effectiveBudget)
+  if(effectiveWifi) p.set('wifi','true')
+  if(effectiveCooking) p.set('cooking','true')
+  if(effectiveGender) p.set('gender',effectiveGender)
   if(demo) p.set('includeDemo','true')
   try {
    const r=await fetch(API+'/properties?'+p.toString()); const b=await r.json()
