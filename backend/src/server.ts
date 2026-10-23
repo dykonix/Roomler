@@ -385,9 +385,21 @@ app.get('/api/public/properties/:id', async (req, res) => {
         p.notice_period_value, p.notice_period_unit, p.electricity_billing_mode,
         p.electricity_rate_per_unit, p.listing_status, p.verification_status, p.data_label,
         c.canonical_name AS city, l.canonical_name AS locality,
+        price.amount AS starting_monthly_amount, price.currency AS starting_monthly_currency,
+        wifi.value_boolean AS wifi_available, wifi.value_state AS wifi_value_state,
         COALESCE(image_data.images, '[]'::json) AS images
       FROM properties p JOIN cities c ON c.id=p.city_id
       LEFT JOIN localities l ON l.id=p.locality_id
+      LEFT JOIN LATERAL (
+        SELECT rp.amount, rp.currency FROM property_floors pf
+        JOIN rooms r ON r.floor_id=pf.id JOIN room_prices rp ON rp.room_id=r.id
+        WHERE pf.property_id=p.id AND rp.is_current=TRUE AND rp.stay_period='monthly'
+          AND (rp.valid_from IS NULL OR rp.valid_from<=CURRENT_DATE)
+          AND (rp.valid_to IS NULL OR rp.valid_to>=CURRENT_DATE)
+        ORDER BY rp.amount ASC LIMIT 1
+      ) price ON TRUE
+      LEFT JOIN property_attribute_values wifi
+        ON wifi.property_id=p.id AND wifi.attribute_key='wifi_available'
       LEFT JOIN LATERAL (
         SELECT json_agg(json_build_object('id',pi.id,'image_url',pi.image_url,
           'image_label',pi.image_label,'alt_text',pi.alt_text,'is_cover',pi.is_cover)
