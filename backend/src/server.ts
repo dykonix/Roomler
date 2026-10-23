@@ -597,7 +597,9 @@ app.get('/api/public/properties/:id', async (req, res) => {
         c.canonical_name AS city, l.canonical_name AS locality,
         price.amount AS starting_monthly_amount, price.currency AS starting_monthly_currency,
         wifi.value_boolean AS wifi_available, wifi.value_state AS wifi_value_state,
-        COALESCE(image_data.images, '[]'::json) AS images
+        COALESCE(image_data.images, '[]'::json) AS images,
+        COALESCE(property_amenities.items, '[]'::json) AS property_amenities,
+        COALESCE(floor_data.items, '[]'::json) AS floors
       FROM properties p JOIN cities c ON c.id=p.city_id
       LEFT JOIN localities l ON l.id=p.locality_id
       LEFT JOIN LATERAL (
@@ -805,6 +807,81 @@ app.get('/api/admin/properties/:id', async (req, res) => {
         ) ORDER BY pi.is_cover DESC, pi.display_order, pi.id) AS images
         FROM property_images pi WHERE pi.property_id = p.id
       ) image_data ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'key', pav.attribute_key,
+          'value', CASE WHEN pav.value_state = 'unknown' THEN 'unknown'
+                        WHEN pav.value_boolean IS TRUE THEN 'yes' ELSE 'no' END,
+          'verification_status', pav.verification_status,
+          'source_note', pav.source_note
+        ) ORDER BY pav.attribute_key) AS items
+        FROM property_attribute_values pav WHERE pav.property_id = p.id
+      ) property_amenities ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'id', f.id, 'number', f.floor_number, 'label', f.floor_label, 'notes', f.notes,
+          'amenities', COALESCE(fa.items, '[]'::json),
+          'rooms', COALESCE(rd.items, '[]'::json)
+        ) ORDER BY f.floor_number, f.floor_label) AS items
+        FROM property_floors f
+        LEFT JOIN LATERAL (
+          SELECT json_agg(json_build_object(
+            'key', fav.attribute_key,
+            'value', CASE WHEN fav.value_state = 'unknown' THEN 'unknown'
+                          WHEN fav.value_boolean IS TRUE THEN 'yes' ELSE 'no' END,
+            'verification_status', fav.verification_status,
+            'source_note', fav.source_note
+          ) ORDER BY fav.attribute_key) AS items
+          FROM floor_attribute_values fav WHERE fav.floor_id = f.id
+        ) fa ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT json_agg(json_build_object(
+            'id', r.id, 'label', r.room_label, 'type', r.room_type,
+            'maxOccupants', r.max_occupants, 'status', r.room_status,
+            'furnishingStatus', r.furnishing_status, 'attachedBathroom', r.attached_bathroom,
+            'wifiAvailableInRoom', r.wifi_available_in_room, 'notes', r.notes,
+            'amenities', COALESCE(ra.items, '[]'::json),
+            'offers', COALESCE(rp.items, '[]'::json),
+            'charges', COALESCE(rc.items, '[]'::json),
+            'beds', COALESCE(bd.items, '[]'::json)
+          ) ORDER BY r.room_label) AS items
+          FROM rooms r
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object(
+              'key', rav.attribute_key,
+              'value', CASE WHEN rav.value_state = 'unknown' THEN 'unknown'
+                            WHEN rav.value_boolean IS TRUE THEN 'yes' ELSE 'no' END,
+              'verification_status', rav.verification_status,
+              'source_note', rav.source_note
+            ) ORDER BY rav.attribute_key) AS items
+            FROM room_attribute_values rav WHERE rav.room_id = r.id
+          ) ra ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object(
+              'id', rp.id, 'amount', rp.amount, 'currency', rp.currency,
+              'rentBasis', rp.rent_basis, 'stayPeriod', rp.stay_period,
+              'foodOption', rp.food_option, 'status', rp.offer_status
+            ) ORDER BY rp.is_current DESC, rp.valid_from DESC) AS items
+            FROM room_prices rp WHERE rp.room_id = r.id
+          ) rp ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object(
+              'id', ch.id, 'name', ch.charge_name, 'amount', ch.amount,
+              'currency', ch.currency, 'basis', ch.charge_basis,
+              'mandatory', ch.mandatory, 'description', ch.description
+            ) ORDER BY ch.charge_name) AS items
+            FROM room_charges ch WHERE ch.room_id = r.id
+          ) rc ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object(
+              'id', b.id, 'label', b.bed_label, 'type', b.bed_type, 'status', b.bed_status
+            ) ORDER BY b.bed_label) AS items
+            FROM beds b WHERE b.room_id = r.id
+          ) bd ON TRUE
+          WHERE r.floor_id = f.id
+        ) rd ON TRUE
+        WHERE f.property_id = p.id
+      ) floor_data ON TRUE
       WHERE p.id = $1::uuid
     `, [req.params.id]);
 
