@@ -744,7 +744,7 @@ function App() {
       {editingProperty && editValues && <div className="modal-backdrop" role="presentation">
         <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
           <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
-          <div className="modal-notice">This edit form updates property-level fields. Existing floors, rooms, beds, pricing, charges and amenities are preserved. Photos are shown below for reference; photo editing is not enabled in this form yet.</div>
+          <div className="modal-notice">Edit property details, amenities, floors, rooms, monthly rent offers and room charges below. Existing records not represented in this form are preserved. Photo editing is not enabled here.</div>
           <section className="edit-photo-section" aria-label="Existing property photos">
             <div className="edit-photo-heading"><strong>Property photos</strong><span>{editingProperty.images?.length ?? 0} saved photo(s)</span></div>
             {editingProperty.images?.length ? <div className="edit-photo-grid">{editingProperty.images.map((image, index) => {
@@ -810,6 +810,9 @@ function App() {
                   <div className="form-row">
                     <label className="form-field">Furnishing<select value={room.furnishingStatus} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,furnishingStatus:e.target.value}:r)} )}))}><option value="">Unknown</option><option value="furnished">Furnished</option><option value="semi_furnished">Semi-furnished</option><option value="unfurnished">Unfurnished</option></select></label>
                     <label className="form-field">Attached bathroom<select value={room.attachedBathroom} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,attachedBathroom:e.target.value}:r)} )}))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+                  </div>
+                  <div className="form-row">
+                    <label className="form-field">Wi-Fi available in room<select value={room.wifiAvailableInRoom} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,wifiAvailableInRoom:e.target.value}:r)} )}))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
                   </div>
                   <label className="form-field">Room notes<input value={room.notes} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,notes:e.target.value}:r)} )}))}/></label>
                   <strong>Room amenities</strong>
