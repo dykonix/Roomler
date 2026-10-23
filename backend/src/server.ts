@@ -362,9 +362,10 @@ app.get('/api/public/properties', async (req, res) => {
       AND ($4 = '' OR p.property_type = $4)
       AND ($5::numeric IS NULL OR price.amount <= $5)
       AND (NOT $6::boolean OR wifi.value_state = 'known' AND wifi.value_boolean = TRUE)
-      AND (NOT $7::boolean OR p.cooking_allowed = TRUE
-        OR EXISTS (SELECT 1 FROM property_attribute_values ca WHERE ca.property_id=p.id
-          AND ca.attribute_key='cooking_allowed' AND ca.value_state='known' AND ca.value_boolean=TRUE))
+      AND (NOT $7::boolean OR COALESCE(p.cooking_allowed,
+        (SELECT ca.value_boolean FROM property_attribute_values ca
+         WHERE ca.property_id=p.id AND ca.attribute_key='cooking_allowed'
+           AND ca.value_state='known' LIMIT 1), FALSE) = TRUE)
       ORDER BY price.amount ASC NULLS LAST, p.updated_at DESC
       LIMIT 100
     `, [includeDemo, city, locality, propertyType, maxRent, wifi, cooking]);
