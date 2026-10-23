@@ -4,8 +4,9 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import cors from 'cors';
 import express from 'express';
-import { S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { pool } from './db.js';
 
@@ -37,6 +38,27 @@ const region = process.env.AWS_REGION ?? 'ap-south-1';
 const bucketName = process.env.S3_BUCKET_NAME;
 
 const s3 = new S3Client({ region });
+
+// Convert stored S3 references into temporary browser-readable URLs.
+// The database keeps storage keys; signed URLs are generated only for API responses.
+async function resolvePublicImageUrls<T extends { image_url?: string | null; storage_key?: string | null }>(images: T[]): Promise<T[]> {
+  return Promise.all(images.map(async (image) => {
+    const key = image.storage_key || (typeof image.image_url === 'string' && image.image_url.startsWith('s3://')
+      ? image.image_url.slice('s3://'.length)
+      : null);
+    if (!bucketName || !key || !key.startsWith('pending/')) return image;
+    try {
+      const imageUrl = await getSignedUrl(s3, new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+      }), { expiresIn: 3600 });
+      return { ...image, image_url: imageUrl };
+    } catch (error) {
+      console.error('Unable to create image URL:', error);
+      return image;
+    }
+  }));
+}
 
 const allowedTypes: Record<string, { maxBytes: number }> = {
   'image/jpeg': { maxBytes: 10 * 1024 * 1024 },
@@ -432,7 +454,7 @@ app.get('/api/public/properties', async (req, res) => {
       LEFT JOIN property_attribute_values wifi
         ON wifi.property_id = p.id AND wifi.attribute_key = 'wifi_available'
       LEFT JOIN LATERAL (
-        SELECT json_agg(json_build_object('id', pi.id, 'image_url', pi.image_url,
+        SELECT json_agg(json_build_object('id', pi.id, 'image_url', pi.image_url, 'storage_key', pi.storage_key,
           'image_label', pi.image_label, 'alt_text', pi.alt_text, 'is_cover', pi.is_cover)
           ORDER BY pi.is_cover DESC, pi.display_order ASC) AS images
         FROM property_images pi WHERE pi.property_id = p.id
@@ -453,7 +475,11 @@ app.get('/api/public/properties', async (req, res) => {
       ORDER BY price.amount ASC NULLS LAST, p.updated_at DESC
       LIMIT 100
     `, [includeDemo, city, locality, propertyType, maxRent, wifi, cooking]);
-    res.json({ data: result.rows, count: result.rows.length, includesSyntheticDemo: includeDemo });
+    const data = await Promise.all(result.rows.map(async (property) => ({
+      ...property,
+      images: await resolvePublicImageUrls(Array.isArray(property.images) ? property.images : []),
+    })));
+    res.json({ data, count: data.length, includesSyntheticDemo: includeDemo });
   } catch (error) {
     console.error('Public property search failed:', error);
     res.status(500).json({ error: 'Unable to search properties.' });
@@ -490,7 +516,7 @@ app.get('/api/public/properties/:id', async (req, res) => {
       LEFT JOIN property_attribute_values wifi
         ON wifi.property_id=p.id AND wifi.attribute_key='wifi_available'
       LEFT JOIN LATERAL (
-        SELECT json_agg(json_build_object('id',pi.id,'image_url',pi.image_url,
+        SELECT json_agg(json_build_object('id',pi.id,'image_url',pi.image_url,'storage_key',pi.storage_key,
           'image_label',pi.image_label,'alt_text',pi.alt_text,'is_cover',pi.is_cover)
           ORDER BY pi.is_cover DESC,pi.display_order ASC) AS images
         FROM property_images pi WHERE pi.property_id=p.id
@@ -516,7 +542,9 @@ app.get('/api/public/properties/:id', async (req, res) => {
       ) prices ON TRUE
       WHERE f.property_id=$1::uuid ORDER BY r.room_label
     `, [req.params.id]);
-    res.json({ data: { ...result.rows[0], rooms: rooms.rows } });
+    const property = result.rows[0];
+    property.images = await resolvePublicImageUrls(Array.isArray(property.images) ? property.images : []);
+    res.json({ data: { ...property, rooms: rooms.rows } });
   } catch (error) {
     console.error('Public property detail failed:', error);
     res.status(500).json({ error: 'Unable to load property details.' });
