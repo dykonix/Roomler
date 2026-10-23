@@ -776,6 +776,65 @@ function App() {
               <label className="form-field">Co-ed rooms allowed<select value={editValues.coEdRoomsAllowed} onChange={e=>setEditValues({...editValues,coEdRoomsAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
               <label className="form-field">Cooking allowed<select value={editValues.cookingAllowed} onChange={e=>setEditValues({...editValues,cookingAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
             </div>
+
+            {inventoryValues && <section className="edit-inventory">
+              <h3>Property amenities</h3>
+              <p className="form-help">Unknown means the information has not been confirmed. Saving does not verify an attribute.</p>
+              <div className="amenity-grid">{formOptions.amenities.filter(a=>a.scope==='property').map(option => {
+                const current = inventoryValues.propertyAmenities.find((a:any)=>a.key===option.attribute_key)?.value ?? 'unknown'
+                return <label className="amenity-row" key={option.attribute_key}><span>{option.display_name}</span><select value={current} onChange={e=>setInventoryValues((prev:any)=>({...prev,propertyAmenities:prev.propertyAmenities.some((a:any)=>a.key===option.attribute_key)?prev.propertyAmenities.map((a:any)=>a.key===option.attribute_key?{...a,value:e.target.value}:a):[...prev.propertyAmenities,{key:option.attribute_key,value:e.target.value}]}))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+              })}</div>
+              <h3>Floors and rooms</h3>
+              {inventoryValues.floors.map((floor:any, fi:number) => <section className="edit-floor" key={floor.id ?? `new-floor-${fi}`}>
+                <h4>Floor {fi+1}</h4>
+                <div className="form-row">
+                  <label className="form-field">Floor number<input type="number" value={floor.number} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i===fi?{...f,number:e.target.value}:f)}))}/></label>
+                  <label className="form-field">Floor label<input required value={floor.label} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i===fi?{...f,label:e.target.value}:f)}))}/></label>
+                </div>
+                <label className="form-field">Floor notes<input value={floor.notes} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i===fi?{...f,notes:e.target.value}:f)}))}/></label>
+                <strong>Floor amenities</strong>
+                <div className="amenity-grid">{formOptions.amenities.filter(a=>a.scope==='floor').map(option => {
+                  const current = floor.amenities.find((a:any)=>a.key===option.attribute_key)?.value ?? 'unknown'
+                  return <label className="amenity-row" key={option.attribute_key}><span>{option.display_name}</span><select value={current} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,amenities:f.amenities.some((a:any)=>a.key===option.attribute_key)?f.amenities.map((a:any)=>a.key===option.attribute_key?{...a,value:e.target.value}:a):[...f.amenities,{key:option.attribute_key,value:e.target.value}]})}))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+                })}</div>
+                {floor.rooms.map((room:any, ri:number) => <section className="edit-room" key={room.id ?? `new-room-${fi}-${ri}`}>
+                  <h4>Room {ri+1}</h4>
+                  <div className="form-row">
+                    <label className="form-field">Room label<input required value={room.label} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,label:e.target.value}:r)} )}))}/></label>
+                    <label className="form-field">Room type<select value={room.type} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,type:e.target.value,maxOccupants:e.target.value==='single'?'1':(Number(r.maxOccupants)<2?'2':r.maxOccupants)}:r)} )}))}><option value="single">Private / single</option><option value="shared">Shared</option></select></label>
+                  </div>
+                  <div className="form-row">
+                    <label className="form-field">Maximum occupants<input type="number" min="1" max="50" required value={room.maxOccupants} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,maxOccupants:e.target.value}:r)} )}))}/></label>
+                    <label className="form-field">Availability<select value={room.status} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,status:e.target.value}:r)} )}))}><option value="unknown">Unknown</option><option value="available">Available</option><option value="occupied">Occupied</option><option value="reserved">Reserved</option><option value="unavailable">Unavailable</option></select></label>
+                  </div>
+                  <div className="form-row">
+                    <label className="form-field">Furnishing<select value={room.furnishingStatus} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,furnishingStatus:e.target.value}:r)} )}))}><option value="">Unknown</option><option value="furnished">Furnished</option><option value="semi_furnished">Semi-furnished</option><option value="unfurnished">Unfurnished</option></select></label>
+                    <label className="form-field">Attached bathroom<select value={room.attachedBathroom} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,attachedBathroom:e.target.value}:r)} )}))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+                  </div>
+                  <label className="form-field">Room notes<input value={room.notes} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j===ri?{...r,notes:e.target.value}:r)} )}))}/></label>
+                  <strong>Room amenities</strong>
+                  <div className="amenity-grid">{formOptions.amenities.filter(a=>a.scope==='room').map(option => {
+                    const current = room.amenities.find((a:any)=>a.key===option.attribute_key)?.value ?? 'unknown'
+                    return <label className="amenity-row" key={option.attribute_key}><span>{option.display_name}</span><select value={current} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,amenities:r.amenities.some((a:any)=>a.key===option.attribute_key)?r.amenities.map((a:any)=>a.key===option.attribute_key?{...a,value:e.target.value}:a):[...r.amenities,{key:option.attribute_key,value:e.target.value}]})})))}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+                  })}</div>
+                  <strong>Monthly rent offers</strong>
+                  {room.offers.map((offer:any, oi:number)=><div className="form-row" key={offer.id ?? `offer-${oi}`}>
+                    <label className="form-field">Monthly rent (₹)<input type="number" min="1" required value={offer.amount} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,offers:r.offers.map((o:any,k:number)=>k===oi?{...o,amount:e.target.value}:o)})})) )}/></label>
+                    <label className="form-field">Food option<select value={offer.foodOption} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,offers:r.offers.map((o:any,k:number)=>k===oi?{...o,foodOption:e.target.value}:o)})})) )}><option value="unknown">Unknown</option><option value="included">Included</option><option value="excluded">Excluded</option></select></label>
+                  </div>)}
+                  <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,offers:[...r.offers,{amount:'',rentBasis:r.type==='shared'?'per_bed':'per_room',foodOption:'unknown',status:'unknown'}]})}))})}>＋ Add rent offer</button>
+                  <strong>Additional room charges</strong>
+                  {room.charges.map((charge:any, ci:number)=><div className="form-row" key={charge.id ?? `charge-${ci}`}>
+                    <label className="form-field">Charge name<input required value={charge.name} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,charges:r.charges.map((ch:any,k:number)=>k===ci?{...ch,name:e.target.value}:ch)})})) )}/></label>
+                    <label className="form-field">Amount (₹)<input type="number" min="0" required value={charge.amount} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,charges:r.charges.map((ch:any,k:number)=>k===ci?{...ch,amount:e.target.value}:ch)})})) )}/></label>
+                  </div>)}
+                  <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,charges:[...r.charges,{name:'',amount:'',basis:'monthly',mandatory:false,description:''}]})}))})}>＋ Add charge</button>
+                </section>)}
+                <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:[...f.rooms,{label:`Room ${f.rooms.length+1}`,type:'single',maxOccupants:'1',status:'unknown',furnishingStatus:'',attachedBathroom:'unknown',wifiAvailableInRoom:'unknown',notes:'',amenities:formOptions.amenities.filter(a=>a.scope==='room').map(a=>({key:a.attribute_key,value:'unknown'})),offers:[{amount:'',rentBasis:'per_room',foodOption:'unknown',status:'unknown'}],charges:[],beds:[]}]})})))}>＋ Add room to floor</button>
+              </section>)}
+              <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:[...p.floors,{number:String(p.floors.length),label:`Floor ${p.floors.length}`,notes:'',amenities:formOptions.amenities.filter(a=>a.scope==='floor').map(a=>({key:a.attribute_key,value:'unknown'})),rooms:[{label:'Room 1',type:'single',maxOccupants:'1',status:'unknown',furnishingStatus:'',attachedBathroom:'unknown',wifiAvailableInRoom:'unknown',notes:'',amenities:formOptions.amenities.filter(a=>a.scope==='room').map(a=>({key:a.attribute_key,value:'unknown'})),offers:[{amount:'',rentBasis:'per_room',foodOption:'unknown',status:'unknown'}],charges:[],beds:[]}] }]}))}>＋ Add floor</button>
+              <p className="form-help">Safety: removing floors, rooms, prices or charges is intentionally not supported here; omitted records remain in the database. Photos remain display-only.</p>
+            </section>}
             {actionError && <p className="form-error" role="alert">{actionError}</p>}
             <div className="modal-footer"><button className="secondary-button" type="button" disabled={actionBusy} onClick={()=>{setEditingProperty(null);setEditValues(null);setActionError('')}}>Cancel</button><button className="primary-button" type="submit" disabled={actionBusy}>{actionBusy ? 'Saving…' : 'Save changes'}</button></div>
           </form>
