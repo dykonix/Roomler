@@ -812,7 +812,9 @@ app.get('/api/admin/properties/:id', async (req, res) => {
       res.status(404).json({ error: 'Property not found.' });
       return;
     }
-    res.json({ data: result.rows[0] });
+    const property = result.rows[0];
+    property.images = await resolvePublicImageUrls(Array.isArray(property.images) ? property.images : []);
+    res.json({ data: property });
   } catch (error) {
     console.error('Failed to fetch property details:', error);
     res.status(500).json({ error: 'Unable to load property details.' });
