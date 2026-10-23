@@ -99,7 +99,7 @@ The current UI does not expose owner contact information because the public API 
 
 ## Verification status and limitations
 
-The public search journey and its CI workflow are committed on the draft branch `feature/public-search-journey` in [PR #1](https://github.com/dykonix/Roomler/pull/1). The branch has not been merged. A completed CI result, local frontend build, backend typecheck and live SQL/API tests have not yet been verified for that branch. Do not describe these as passing until actual outputs are recorded.
+The public search journey and its CI workflow are committed on the draft branch `feature/public-search-journey` in [PR #1](https://github.com/dykonix/Roomler/pull/1). The branch has not been merged. GitHub Actions run #20 completed successfully for an earlier revision of this branch: frontend build, frontend lint and backend typecheck passed on that revision. Additional commits were made afterward, so the latest branch head still needs a fresh CI result. Live SQL/API tests and browser tests have not been verified.
 
 Before treating this as a deployable MVP:
 - Run the CI checks and fix failures.
