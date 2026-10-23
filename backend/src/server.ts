@@ -12,7 +12,25 @@ import { pool } from './db.js';
 const app = express();
 const port = Number(process.env.PORT ?? 3001);
 
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN }));
+const configuredFrontendOrigins = (process.env.FRONTEND_ORIGIN ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    const isLocalDevelopmentOrigin =
+      process.env.NODE_ENV !== 'production' &&
+      /^https?:\/\/(localhost|127\.0\.0\.1):5173$/.test(origin ?? '');
+
+    if (!origin || configuredFrontendOrigins.includes(origin) || isLocalDevelopmentOrigin) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, false);
+  },
+}));
 app.use(express.json({ limit: '1mb' }));
 
 const region = process.env.AWS_REGION ?? 'ap-south-1';
@@ -349,6 +367,25 @@ app.post('/api/admin/properties', async (req, res) => {
   }
 });
 
+
+/**
+ * Public location options for the search UI.
+ * Only active cities are exposed; no owner or admin data is returned.
+ */
+app.get('/api/public/locations', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, canonical_name AS name, state_name
+      FROM cities
+      WHERE is_active = TRUE
+      ORDER BY canonical_name
+    `);
+    res.json({ cities: result.rows });
+  } catch (error) {
+    console.error('Public location options failed:', error);
+    res.status(500).json({ error: 'Unable to load cities.' });
+  }
+});
 
 /**
  * Public property search.
