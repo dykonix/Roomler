@@ -112,8 +112,13 @@ Before treating this as a deployable MVP:
 
 ## Project notes
 
+- [MVP PRD](docs/PRD.md)
+- [Solution architecture](docs/solution-architecture.md)
+- [Database design](docs/database-design.md)
+- [Evaluation plan and risks](docs/evaluation-and-risks.md)
 - [Public search journey and verification checklist](docs/public-search-journey.md)
 - Database clean-install schema: `database/schema.sql`
 - Synthetic seed data: `database/seed.sql`
+- Sample queries: `database/sample-queries.sql`
 
 Roomler's intended differentiator is lifestyle-fit discovery with explicit data provenance and uncertainty—not AI for its own sake.
