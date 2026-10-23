@@ -274,3 +274,16 @@ tbody tr:hover { background: #fdfdff; }
 .edit-photo-cover{align-self:flex-start;padding:3px 7px;border-radius:20px;background:#e9f0ff;color:#2455d6;font-size:10px;font-weight:700}
 .edit-photo-empty{font-size:13px;color:#69758c}
 @media(max-width:560px){.edit-photo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.edit-photo-card img,.edit-photo-unavailable{height:100px}}
+
+
+/* Admin inventory editor */
+.edit-inventory { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border, #e3e5e8); }
+.edit-inventory h3 { margin: 1.25rem 0 .5rem; }
+.edit-inventory h3:first-child { margin-top: 0; }
+.edit-floor, .edit-room { border: 1px solid var(--border, #e3e5e8); border-radius: 12px; padding: 1rem; margin: .85rem 0; }
+.edit-floor { background: var(--surface-subtle, #fafafa); }
+.edit-room { background: var(--surface, #fff); }
+.edit-floor h4, .edit-room h4 { margin: 0 0 .75rem; }
+.edit-inventory > .form-help { margin-bottom: 1rem; }
+.edit-inventory > strong, .edit-room > strong { display: block; margin: .8rem 0 .45rem; }
+.edit-inventory .compact-button { margin: .5rem .35rem .5rem 0; }
