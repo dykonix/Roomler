@@ -695,7 +695,17 @@ function App() {
       {editingProperty && editValues && <div className="modal-backdrop" role="presentation">
         <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
           <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
-          <div className="modal-notice">This first edit pass updates property-level fields only. Existing floors, rooms, beds, pricing, charges, amenities and photos are preserved and are not editable here yet.</div>
+          <div className="modal-notice">This edit form updates property-level fields. Existing floors, rooms, beds, pricing, charges and amenities are preserved. Photos are shown below for reference; photo editing is not enabled in this form yet.</div>
+          <section className="edit-photo-section" aria-label="Existing property photos">
+            <div className="edit-photo-heading"><strong>Property photos</strong><span>{editingProperty.images?.length ?? 0} saved photo(s)</span></div>
+            {editingProperty.images?.length ? <div className="edit-photo-grid">{editingProperty.images.map((image, index) => {
+              const usableUrl = image.image_url && !image.image_url.startsWith('s3://');
+              return <figure className="edit-photo-card" key={image.id}>
+                {usableUrl ? <img src={image.image_url} alt={image.alt_text || image.image_label || `Property photo ${index + 1}`} /> : <div className="edit-photo-unavailable">Image preview unavailable</div>}
+                <figcaption><strong>{image.image_label?.replaceAll('_', ' ') || 'Photo'}</strong>{image.is_cover && <span className="edit-photo-cover">Cover photo</span>}<small>{image.alt_text || 'No alt text provided'}</small></figcaption>
+              </figure>;
+            })}</div> : <p className="edit-photo-empty">No saved photos are attached to this property.</p>}
+          </section>
           <form onSubmit={savePropertyEdit}>
             <label className="form-field">Property title *<input required minLength={3} maxLength={150} value={editValues.title} onChange={e => setEditValues({...editValues,title:e.target.value})}/></label>
             <label className="form-field">Description<textarea rows={4} maxLength={10000} value={editValues.description} onChange={e => setEditValues({...editValues,description:e.target.value})}/></label>
