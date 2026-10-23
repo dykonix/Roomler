@@ -2,7 +2,7 @@
 
 ## Evidence status
 
-The current database seed is synthetic. No real-user study, production traffic, conversion result or LLM evaluation score is claimed. The public search branch has not yet had a verified local build, typecheck, live API/SQL run or browser test.
+The current database seed is synthetic. No real-user study, production traffic, conversion result or LLM evaluation score is claimed. GitHub Actions run #20 passed frontend build, frontend lint and backend typecheck on an earlier branch revision. Later commits have not yet been confirmed by a fresh run. Live API/SQL and browser tests have not been run.
 
 ## Expected-versus-actual test plan
 
