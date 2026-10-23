@@ -1,0 +1,484 @@
+
+import 'dotenv/config';
+
+import { randomUUID } from 'node:crypto';
+import cors from 'cors';
+import express from 'express';
+import { S3Client } from '@aws-sdk/client-s3';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+
+import { pool } from './db.js';
+
+const app = express();
+const port = Number(process.env.PORT ?? 3001);
+
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN }));
+app.use(express.json({ limit: '1mb' }));
+
+const region = process.env.AWS_REGION ?? 'ap-south-1';
+const bucketName = process.env.S3_BUCKET_NAME;
+
+const s3 = new S3Client({ region });
+
+const allowedTypes: Record<string, { maxBytes: number }> = {
+  'image/jpeg': { maxBytes: 10 * 1024 * 1024 },
+  'image/png': { maxBytes: 10 * 1024 * 1024 },
+  'image/webp': { maxBytes: 10 * 1024 * 1024 },
+  'image/avif': { maxBytes: 10 * 1024 * 1024 },
+};
+
+// Database health check
+app.get('/api/health', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT current_user, current_database()'
+    );
+
+    res.json({
+      status: 'ok',
+      database: result.rows[0].current_database,
+      databaseUser: result.rows[0].current_user,
+    });
+  } catch (error) {
+    console.error('Database health check failed:', error);
+
+    res.status(503).json({
+      status: 'error',
+      message: 'Database unavailable',
+    });
+  }
+});
+
+/**
+ * Form options for the development admin UI.
+ * These records come from PostgreSQL, not hardcoded frontend arrays.
+ */
+app.get('/api/admin/form-options', async (_req, res) => {
+  try {
+    const [cities, localities, owners] = await Promise.all([
+      pool.query(`
+        SELECT id, canonical_name AS name, state_name
+        FROM cities
+        WHERE is_active = TRUE
+        ORDER BY canonical_name
+      `),
+      pool.query(`
+        SELECT
+          l.id,
+          l.canonical_name AS name,
+          l.city_id,
+          c.canonical_name AS city_name
+        FROM localities l
+        JOIN cities c ON c.id = l.city_id
+        WHERE c.is_active = TRUE
+        ORDER BY c.canonical_name, l.canonical_name
+      `),
+      pool.query(`
+        SELECT id, display_name AS name, data_label
+        FROM owners
+        WHERE owner_status = 'active'
+        ORDER BY display_name
+      `),
+    ]);
+
+    res.json({
+      cities: cities.rows,
+      localities: localities.rows,
+      owners: owners.rows,
+    });
+  } catch (error) {
+    console.error('Failed to load property form options:', error);
+    res.status(500).json({
+      error: 'Unable to load property form options.',
+    });
+  }
+});
+
+/**
+ * Development-only property creation.
+ * Authentication/authorization must be implemented before production use.
+ */
+app.post('/api/admin/properties', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(503).json({ error: 'Property creation is not enabled in production.' });
+    return;
+  }
+
+  const body = req.body as Record<string, unknown>;
+  const {
+    title, description = '', propertyType, cityId, localityId, ownerId,
+    address = null, googleMapsUrl = null, latitude = null, longitude = null,
+    coordinateSource = null, genderEligibility = null, couplesAllowed = null,
+    coEdRoomsAllowed = null, cookingAllowed = null, houseRulesNotes = null,
+    securityDepositBasis = null, securityDepositAmount = null,
+    securityDepositRefundPolicy = 'unknown', securityDepositDeductionNotes = null,
+    noticePeriodMonths = null, electricityBillingMode = 'unknown',
+    electricityRatePerUnit = null, fourWheelerParkingSpaces = null,
+    twoWheelerParkingSpaces = null, floors, // New payload; legacy fields below remain supported.
+    rentAmount, rentBasis, roomType, maxOccupants,
+  } = body;
+
+  const fail = (message: string) => { res.status(400).json({ error: message }); };
+  if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 150) return fail('Title must contain 3 to 150 characters.');
+  if (propertyType !== 'PG' && propertyType !== 'Flat') return fail('Property type must be PG or Flat.');
+  if (typeof cityId !== 'string' || typeof ownerId !== 'string') return fail('A city and owner are required.');
+  if (localityId != null && typeof localityId !== 'string') return fail('Locality must be a valid ID or left unspecified.');
+  if (typeof description !== 'string' || description.length > 10000) return fail('Description must be text with at most 10,000 characters.');
+  if (genderEligibility != null && !['Boys', 'Girls', 'Unisex'].includes(String(genderEligibility))) return fail('Choose a supported occupancy eligibility value or leave it unknown.');
+  for (const [name, value] of [['couplesAllowed', couplesAllowed], ['coEdRoomsAllowed', coEdRoomsAllowed], ['cookingAllowed', cookingAllowed]] as const) {
+    if (value != null && typeof value !== 'boolean') return fail(`${name} must be Yes, No, or Unknown.`);
+  }
+  if ((latitude == null) !== (longitude == null)) return fail('Latitude and longitude must both be provided, or both left blank.');
+  if (latitude != null && (typeof latitude !== 'number' || latitude < -90 || latitude > 90)) return fail('Latitude must be between -90 and 90.');
+  if (longitude != null && (typeof longitude !== 'number' || longitude < -180 || longitude > 180)) return fail('Longitude must be between -180 and 180.');
+  if (latitude != null && !['openstreetmap', 'google_places', 'manual', 'owner_submitted', 'other'].includes(String(coordinateSource))) return fail('Select a supported coordinate source when coordinates are provided.');
+  if (securityDepositBasis != null && !['two_weeks_rent', 'one_month_rent', 'two_months_rent', 'three_months_rent', 'four_months_rent', 'fixed_amount', 'not_required'].includes(String(securityDepositBasis))) return fail('Choose a supported security deposit option.');
+  if (securityDepositBasis === 'fixed_amount' && (typeof securityDepositAmount !== 'number' || securityDepositAmount < 0)) return fail('A fixed deposit requires a non-negative amount.');
+  if (securityDepositBasis === 'not_required' && securityDepositAmount != null) return fail('Do not enter an amount when no deposit is required.');
+  if (!['fully_refundable_no_deductions', 'refundable_with_deductions', 'unknown'].includes(String(securityDepositRefundPolicy))) return fail('Choose a supported deposit refund policy.');
+  if (securityDepositRefundPolicy === 'refundable_with_deductions' && (typeof securityDepositDeductionNotes !== 'string' || !securityDepositDeductionNotes.trim())) return fail('Explain the possible deductions when selecting refundable with deductions.');
+  if (noticePeriodMonths != null && (!Number.isInteger(noticePeriodMonths) || Number(noticePeriodMonths) < 0 || Number(noticePeriodMonths) > 6)) return fail('Notice period must be none or between 1 and 6 months.');
+  if (!['included_in_rent', 'metered', 'unknown'].includes(String(electricityBillingMode))) return fail('Choose a supported electricity billing option.');
+  if (electricityBillingMode === 'metered' && (typeof electricityRatePerUnit !== 'number' || electricityRatePerUnit < 0)) return fail('Metered electricity requires a non-negative rate per unit.');
+  if (electricityRatePerUnit != null && (typeof electricityRatePerUnit !== 'number' || electricityRatePerUnit < 0)) return fail('Electricity rate must be non-negative.');
+  for (const [name, value] of [['four-wheeler parking', fourWheelerParkingSpaces], ['two-wheeler parking', twoWheelerParkingSpaces]] as const) {
+    if (value != null && (!Number.isSafeInteger(value) || Number(value) < 0)) return fail(`${name} spaces must be a non-negative whole number or unknown.`);
+  }
+
+  type IncomingCharge = { name: string; amount: number; basis: string; mandatory: boolean; description?: string };
+  type IncomingBed = { label: string; type?: string; status?: string };
+  type IncomingOffer = { amount: number; foodOption?: string; status?: string; rentBasis?: string };
+  type IncomingRoom = { label: string; type: string; maxOccupants: number; status?: string; furnishingStatus?: string; attachedBathroom?: boolean | null; wifiAvailableInRoom?: boolean | null; wifiSpeedMbps?: number | null; notes?: string; beds?: IncomingBed[]; offers?: IncomingOffer[]; charges?: IncomingCharge[] };
+  type IncomingFloor = { number: number; label: string; notes?: string; rooms: IncomingRoom[] };
+  type IncomingImage = { key?: string; url: string; label?: string; altText?: string; displayOrder?: number; isCover?: boolean };
+
+  let normalizedFloors: IncomingFloor[];
+  if (Array.isArray(floors)) {
+    normalizedFloors = floors as IncomingFloor[];
+    if (normalizedFloors.length < 1 || normalizedFloors.length > 30) return fail('Add between 1 and 30 floors.');
+  } else {
+    // Backward compatibility for the original basic form.
+    if (typeof rentAmount !== 'number' || !Number.isFinite(rentAmount) || rentAmount <= 0) return fail('Monthly rent must be a positive number.');
+    if (rentBasis !== 'per_bed' && rentBasis !== 'per_room') return fail('Rent basis must be per_bed or per_room.');
+    if (roomType !== 'single' && roomType !== 'shared') return fail('Room type must be single or shared.');
+    if (!Number.isSafeInteger(maxOccupants) || Number(maxOccupants) < 1 || Number(maxOccupants) > 50) return fail('Maximum occupants must be a whole number from 1 to 50.');
+    if ((roomType === 'single' && maxOccupants !== 1) || (roomType === 'shared' && Number(maxOccupants) < 2)) return fail('Check the room type and maximum occupancy.');
+    normalizedFloors = [{ number: 0, label: 'Floor not specified', rooms: [{ label: 'Initial room record', type: roomType, maxOccupants: Number(maxOccupants), beds: [], offers: [{ amount: rentAmount, rentBasis, foodOption: 'unknown', status: 'unknown' }], charges: [] }] }];
+  }
+
+  const imageList = Array.isArray(body.images) ? body.images as IncomingImage[] : [];
+  if (imageList.length > 30) return fail('A property can have at most 30 photos.');
+  if (imageList.filter((image) => image.isCover).length > 1) return fail('Choose no more than one cover photo.');
+  const floorNumbers = new Set<number>();
+  let roomCount = 0;
+  for (const floor of normalizedFloors) {
+    if (!Number.isInteger(floor.number) || floor.number < -5 || floor.number > 100 || typeof floor.label !== 'string' || !floor.label.trim()) return fail('Each floor needs a valid floor number and label.');
+    if (floorNumbers.has(floor.number)) return fail('Floor numbers must be unique within a property.');
+    floorNumbers.add(floor.number);
+    if (!Array.isArray(floor.rooms) || floor.rooms.length < 1 || floor.rooms.length > 100) return fail('Each floor must contain between 1 and 100 rooms.');
+    const labels = new Set<string>();
+    for (const room of floor.rooms) {
+      roomCount++;
+      if (roomCount > 200) return fail('A property can contain at most 200 rooms.');
+      if (typeof room.label !== 'string' || !room.label.trim() || labels.has(room.label.trim())) return fail('Each room needs a unique, non-empty label within its floor.');
+      labels.add(room.label.trim());
+      if (!['single', 'shared'].includes(room.type) || !Number.isInteger(room.maxOccupants) || room.maxOccupants < 1 || room.maxOccupants > 50) return fail(`Check room type and capacity for ${room.label}.`);
+      if (room.type === 'single' && room.maxOccupants !== 1) return fail(`Private/single room ${room.label} must have capacity 1.`);
+      if (room.type === 'shared' && room.maxOccupants < 2) return fail(`Shared room ${room.label} must have capacity of at least 2.`);
+      if (room.status != null && !['available', 'occupied', 'reserved', 'unavailable', 'unknown'].includes(room.status)) return fail(`Choose a supported availability status for ${room.label}.`);
+      if (room.furnishingStatus != null && !['furnished', 'semi_furnished', 'unfurnished'].includes(room.furnishingStatus)) return fail(`Choose a supported furnishing status for ${room.label}.`);
+      if (!Array.isArray(room.offers) || room.offers.length < 1) return fail(`Add at least one monthly rent offer for ${room.label}.`);
+      for (const offer of room.offers) {
+        const expectedBasis = room.type === 'shared' ? 'per_bed' : 'per_room';
+        if ((offer.rentBasis ?? expectedBasis) !== expectedBasis) return fail(`${room.label}: ${room.type === 'shared' ? 'shared rooms must be priced per bed' : 'single/private rooms must be priced per room'}.`);
+        if (typeof offer.amount !== 'number' || !Number.isFinite(offer.amount) || offer.amount <= 0) return fail(`Enter a positive monthly rent for ${room.label}.`);
+        if (offer.foodOption != null && !['included', 'excluded', 'unknown'].includes(offer.foodOption)) return fail(`Choose a supported food option for ${room.label}.`);
+        if (offer.status != null && !['active', 'inactive', 'unknown'].includes(offer.status)) return fail(`Choose a supported offer status for ${room.label}.`);
+      }
+      const beds = Array.isArray(room.beds) ? room.beds : [];
+      if (room.type === 'shared' && beds.length > 0 && beds.length > room.maxOccupants) return fail(`${room.label}: number of beds cannot exceed maximum occupants.`);
+      if (room.type === 'shared' && beds.some((bed) => !bed.label?.trim())) return fail(`Every bed in ${room.label} needs a label.`);
+      for (const charge of room.charges ?? []) {
+        if (!charge.name?.trim() || typeof charge.amount !== 'number' || !Number.isFinite(charge.amount) || charge.amount < 0 || !['one_time', 'monthly', 'per_unit', 'per_use', 'other'].includes(charge.basis) || typeof charge.mandatory !== 'boolean') return fail(`Check the charge details for ${room.label}.`);
+      }
+    }
+  }
+  for (const image of imageList) {
+    if (typeof image.url !== 'string' || !image.url.trim()) return fail('Each photo must include an image URL or storage reference.');
+    if (image.label != null && !['exterior', 'bedroom', 'kitchen', 'bathroom', 'living_area', 'other'].includes(image.label)) return fail('Choose a supported photo label.');
+    if (image.key != null && !image.key.startsWith('pending/')) return fail('Photo storage key is not a pending Roomler upload.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const referenceCheck = await client.query(`
+      SELECT c.id AS city_id, o.id AS owner_id, o.data_label AS owner_data_label, l.id AS locality_id
+      FROM cities c CROSS JOIN owners o
+      LEFT JOIN localities l ON l.id = $3::uuid AND l.city_id = c.id
+      WHERE c.id = $1::uuid AND c.is_active = TRUE AND o.id = $2::uuid AND o.owner_status = 'active'
+    `, [cityId, ownerId, localityId ?? null]);
+    if (referenceCheck.rowCount !== 1) throw new Error('Selected city or active owner is invalid.');
+    if (localityId && referenceCheck.rows[0].locality_id !== localityId) throw new Error('Selected locality does not belong to the selected city.');
+
+    const propertyResult = await client.query(`
+      INSERT INTO properties (
+        owner_id, title, description, property_type, city_id, locality_id, address,
+        latitude, longitude, coordinate_source, google_maps_url, gender_eligibility,
+        couples_allowed, co_ed_rooms_allowed, cooking_allowed, house_rules_notes,
+        security_deposit_basis, security_deposit_amount, security_deposit_refund_policy,
+        security_deposit_deduction_notes, notice_period_value, notice_period_unit,
+        electricity_billing_mode, electricity_rate_per_unit, four_wheeler_parking_spaces,
+        two_wheeler_parking_spaces, monthly_stay_available, listing_status, listing_source,
+        verification_status, data_label
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+        $21, CASE WHEN $21::numeric IS NULL THEN NULL ELSE 'months' END,
+        $22,$23,$24,$25,TRUE,'draft','admin_entered','unverified','synthetic_demo'
+      ) RETURNING id, title, listing_status, data_label
+    `, [ownerId, title.trim(), description.trim(), propertyType, cityId, localityId ?? null,
+      typeof address === 'string' && address.trim() ? address.trim() : null,
+      latitude, longitude, coordinateSource, typeof googleMapsUrl === 'string' && googleMapsUrl.trim() ? googleMapsUrl.trim() : null,
+      genderEligibility, couplesAllowed, coEdRoomsAllowed, cookingAllowed,
+      typeof houseRulesNotes === 'string' && houseRulesNotes.trim() ? houseRulesNotes.trim() : null,
+      securityDepositBasis, securityDepositAmount, securityDepositRefundPolicy,
+      typeof securityDepositDeductionNotes === 'string' && securityDepositDeductionNotes.trim() ? securityDepositDeductionNotes.trim() : null,
+      noticePeriodMonths, electricityBillingMode, electricityRatePerUnit,
+      fourWheelerParkingSpaces, twoWheelerParkingSpaces]);
+    const propertyId: string = propertyResult.rows[0].id;
+
+    for (const floor of normalizedFloors) {
+      const floorResult = await client.query(`
+        INSERT INTO property_floors (property_id, floor_number, floor_label, notes, data_label)
+        VALUES ($1,$2,$3,$4,'synthetic_demo') RETURNING id
+      `, [propertyId, floor.number, floor.label.trim(), floor.notes?.trim() || null]);
+      const floorId: string = floorResult.rows[0].id;
+      for (const room of floor.rooms) {
+        const roomResult = await client.query(`
+          INSERT INTO rooms (floor_id, room_label, room_type, max_occupants, furnishing_status,
+            room_status, attached_bathroom, wifi_available_in_room, wifi_speed_mbps, notes, data_label)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'synthetic_demo') RETURNING id
+        `, [floorId, room.label.trim(), room.type, room.maxOccupants, room.furnishingStatus ?? null,
+          room.status ?? 'unknown', room.attachedBathroom ?? null, room.wifiAvailableInRoom ?? null,
+          room.wifiSpeedMbps ?? null, room.notes?.trim() || null]);
+        const roomId: string = roomResult.rows[0].id;
+        const beds = Array.isArray(room.beds) ? room.beds : [];
+        for (const [index, bed] of beds.entries()) {
+          await client.query(`INSERT INTO beds (room_id, bed_label, bed_type, bed_status, data_label)
+            VALUES ($1,$2,$3,$4,'synthetic_demo')`, [roomId, bed.label.trim(), bed.type ?? 'single', bed.status ?? 'unknown']);
+        }
+        for (const offer of room.offers ?? []) {
+          const expectedBasis = room.type === 'shared' ? 'per_bed' : 'per_room';
+          await client.query(`INSERT INTO room_prices (room_id, rent_basis, stay_period, amount, currency,
+            valid_from, is_current, data_label, food_option, offer_status)
+            VALUES ($1,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,'synthetic_demo',$4,$5)`,
+          [roomId, expectedBasis, offer.amount, offer.foodOption ?? 'unknown', offer.status ?? 'unknown']);
+        }
+        for (const charge of room.charges ?? []) {
+          await client.query(`INSERT INTO room_charges (room_id, charge_name, amount, currency, charge_basis,
+            mandatory, description, verification_status, data_label)
+            VALUES ($1,$2,$3,'INR',$4,$5,$6,'unverified','synthetic_demo')`,
+          [roomId, charge.name.trim(), charge.amount, charge.basis, charge.mandatory, charge.description?.trim() || null]);
+        }
+      }
+    }
+
+    for (const image of imageList) {
+      await client.query(`INSERT INTO property_images (property_id, storage_key, image_url, image_label, alt_text,
+        display_order, is_cover, verification_status, data_label)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'unverified','synthetic_demo')`,
+      [propertyId, image.key ?? null, image.url.trim(), image.label ?? 'other', image.altText?.trim() ?? '',
+        image.displayOrder ?? 0, image.isCover ?? false]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ message: 'Draft property created.', property: propertyResult.rows[0], floorCount: normalizedFloors.length, roomCount, imageCount: imageList.length, verificationStatus: 'unverified' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    const message = error instanceof Error ? error.message : 'Unable to create property.';
+    console.error('Failed to create draft property:', error);
+    res.status(400).json({ error: message.includes('invalid') || message.includes('does not belong') ? message : 'Unable to save this property. Check the fields and confirm the required Roomler database migrations are applied.' });
+  } finally {
+    client.release();
+  }
+});
+
+// Admin property listing
+app.get('/api/admin/properties', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        p.id,
+        p.title,
+        p.property_type,
+        c.canonical_name AS city,
+        l.canonical_name AS locality,
+        o.display_name AS owner_name,
+        p.gender_eligibility,
+        p.couples_allowed,
+        p.co_ed_rooms_allowed,
+        p.cooking_allowed,
+        p.listing_status,
+        p.listing_source,
+        p.verification_status,
+        p.last_confirmed_at,
+        p.data_label,
+        p.updated_at,
+        price.amount AS starting_monthly_amount,
+        price.currency AS starting_monthly_currency,
+        price.rent_basis AS starting_monthly_rent_basis,
+        COALESCE(image_data.images, '[]'::json) AS images
+      FROM properties p
+      LEFT JOIN owners o
+        ON o.id = p.owner_id
+      LEFT JOIN cities c
+        ON c.id = p.city_id
+      LEFT JOIN localities l
+        ON l.id = p.locality_id
+      LEFT JOIN LATERAL (
+        SELECT
+          rp.amount,
+          rp.currency,
+          rp.rent_basis
+        FROM property_floors pf
+        JOIN rooms r
+          ON r.floor_id = pf.id
+        JOIN room_prices rp
+          ON rp.room_id = r.id
+        WHERE pf.property_id = p.id
+          AND rp.is_current = TRUE
+          AND rp.stay_period = 'monthly'
+          AND (
+            rp.valid_from IS NULL
+            OR rp.valid_from <= CURRENT_DATE
+          )
+          AND (
+            rp.valid_to IS NULL
+            OR rp.valid_to >= CURRENT_DATE
+          )
+        ORDER BY rp.amount ASC
+        LIMIT 1
+      ) price ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          json_agg(
+            json_build_object(
+              'id', pi.id,
+              'image_url', pi.image_url,
+              'image_label', pi.image_label,
+              'alt_text', pi.alt_text,
+              'display_order', pi.display_order,
+              'is_cover', pi.is_cover
+            )
+            ORDER BY
+              pi.is_cover DESC,
+              pi.display_order ASC,
+              pi.id
+          ) AS images
+        FROM property_images pi
+        WHERE pi.property_id = p.id
+      ) image_data ON TRUE
+      ORDER BY p.updated_at DESC, p.id
+    `);
+
+    res.json({
+      data: result.rows,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error('Failed to fetch admin properties:', error);
+
+    res.status(500).json({
+      error: 'Failed to fetch properties',
+    });
+  }
+});
+
+// Prepare a short-lived, direct-to-S3 upload
+app.post('/api/admin/media/presign-upload', async (req, res) => {
+  // Temporary development-only restriction.
+  // This does not replace authentication or authorization.
+  if (process.env.NODE_ENV === 'production') {
+    res.status(503).json({
+      error: 'Media uploads are not enabled in production.',
+    });
+    return;
+  }
+
+  if (!bucketName) {
+    res.status(500).json({
+      error: 'S3 bucket is not configured.',
+    });
+    return;
+  }
+
+  const { contentType, fileSize } = req.body as {
+    contentType?: unknown;
+    fileSize?: unknown;
+  };
+
+  if (
+    typeof contentType !== 'string' ||
+    !Object.hasOwn(allowedTypes, contentType)
+  ) {
+    res.status(400).json({
+      error: 'Unsupported media type.',
+    });
+    return;
+  }
+
+  if (
+    typeof fileSize !== 'number' ||
+    !Number.isSafeInteger(fileSize) ||
+    fileSize <= 0
+  ) {
+    res.status(400).json({
+      error: 'Invalid file size.',
+    });
+    return;
+  }
+
+  const maxBytes = allowedTypes[contentType]!.maxBytes;
+
+  if (fileSize > maxBytes) {
+    res.status(400).json({
+      error: `File exceeds the ${maxBytes / (1024 * 1024)} MB limit.`,
+    });
+    return;
+  }
+
+  try {
+    // The server chooses the key; clients cannot choose arbitrary paths.
+    const key = `pending/${randomUUID()}`;
+
+    const upload = await createPresignedPost(s3, {
+      Bucket: bucketName,
+      Key: key,
+      Expires: 300,
+      Fields: {
+        'Content-Type': contentType,
+      },
+      Conditions: [
+        ['content-length-range', 1, maxBytes],
+        ['eq', '$Content-Type', contentType],
+      ],
+    });
+
+    res.json({
+      url: upload.url,
+      fields: upload.fields,
+      key,
+      expiresInSeconds: 300,
+      maxBytes,
+    });
+  } catch (error) {
+    console.error('Unable to create media upload policy:', error);
+
+    res.status(500).json({
+      error: 'Unable to prepare media upload.',
+    });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Roomler API listening on http://localhost:${port}`);
+});
