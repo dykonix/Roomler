@@ -985,6 +985,156 @@ app.patch('/api/admin/properties/:id', async (req, res) => {
   }
 });
 
+// Save editable floors, rooms, amenities, rent offers and room charges.
+// Existing records are updated in place; omitted records are not deleted.
+app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
+  if (!developmentOnlyPropertyAction(res)) return;
+  const propertyId = req.params.id;
+  if (!uuidPattern.test(propertyId)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+  const body = req.body as { propertyAmenities?: any[]; floors?: any[] };
+  if (!Array.isArray(body.propertyAmenities) || !Array.isArray(body.floors) || body.floors.length > 30) {
+    res.status(400).json({ error: 'Property amenities and a floors list are required.' });
+    return;
+  }
+  const validAmenity = (a: any) => a && typeof a.key === 'string' && a.key.trim() &&
+    ['yes','no','unknown'].includes(a.value);
+  if (body.propertyAmenities.some(a => !validAmenity(a))) {
+    res.status(400).json({ error: 'Each property amenity must be Yes, No, or Unknown.' });
+    return;
+  }
+  const floorNums = new Set<number>();
+  let roomCount = 0;
+  for (const floor of body.floors) {
+    if (!floor || (floor.id != null && !uuidPattern.test(floor.id)) ||
+        !Number.isInteger(Number(floor.number)) || Number(floor.number) < -5 || Number(floor.number) > 100 ||
+        typeof floor.label !== 'string' || !floor.label.trim() || !Array.isArray(floor.amenities) ||
+        !Array.isArray(floor.rooms) || floor.rooms.length < 1 || floor.rooms.length > 100 ||
+        floor.amenities.some((a: any) => !validAmenity(a))) {
+      res.status(400).json({ error: 'Check each floor, its label, number and amenities.' }); return;
+    }
+    if (floorNums.has(Number(floor.number))) { res.status(400).json({ error: 'Floor numbers must be unique.' }); return; }
+    floorNums.add(Number(floor.number));
+    const labels = new Set<string>();
+    for (const room of floor.rooms) {
+      roomCount++;
+      if (roomCount > 200 || !room || (room.id != null && !uuidPattern.test(room.id)) ||
+          typeof room.label !== 'string' || !room.label.trim() || labels.has(room.label.trim()) ||
+          !['single','shared'].includes(room.type) || !Number.isInteger(Number(room.maxOccupants)) ||
+          Number(room.maxOccupants) < 1 || Number(room.maxOccupants) > 50 ||
+          (room.type === 'single' && Number(room.maxOccupants) !== 1) ||
+          (room.type === 'shared' && Number(room.maxOccupants) < 2) ||
+          !['available','occupied','reserved','unavailable','unknown'].includes(room.status) ||
+          (room.furnishingStatus != null && !['furnished','semi_furnished','unfurnished'].includes(room.furnishingStatus)) ||
+          !Array.isArray(room.amenities) || room.amenities.some((a: any) => !validAmenity(a)) ||
+          !Array.isArray(room.offers) || !Array.isArray(room.charges) || !Array.isArray(room.beds)) {
+        res.status(400).json({ error: 'Check room labels, occupancy, status, amenities, pricing and charges.' }); return;
+      }
+      labels.add(room.label.trim());
+      for (const offer of room.offers) {
+        const expected = room.type === 'shared' ? 'per_bed' : 'per_room';
+        if ((offer.rentBasis ?? expected) !== expected || !Number.isFinite(Number(offer.amount)) || Number(offer.amount) <= 0 ||
+            !['included','excluded','unknown'].includes(offer.foodOption) ||
+            !['active','inactive','unknown'].includes(offer.status)) {
+          res.status(400).json({ error: `Check the monthly rent offer for room ${room.label}.` }); return;
+        }
+      }
+      for (const charge of room.charges) {
+        if (!charge || (charge.id != null && !uuidPattern.test(charge.id)) ||
+            typeof charge.name !== 'string' || !charge.name.trim() ||
+            !Number.isFinite(Number(charge.amount)) || Number(charge.amount) < 0 ||
+            !['one_time','monthly','per_unit','per_use','other'].includes(charge.basis) ||
+            typeof charge.mandatory !== 'boolean') {
+          res.status(400).json({ error: `Check additional charges for room ${room.label}.` }); return;
+        }
+      }
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const exists = await client.query('SELECT id FROM properties WHERE id=$1::uuid FOR UPDATE', [propertyId]);
+    if (!exists.rowCount) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Property not found.' }); return; }
+
+    const saveAmenities = async (table: 'property_attribute_values'|'floor_attribute_values'|'room_attribute_values',
+      idColumn: 'property_id'|'floor_id'|'room_id', entityId: string, items: any[]) => {
+      const current = await client.query(`SELECT attribute_key FROM ${table} WHERE ${idColumn}=$1::uuid`, [entityId]);
+      const currentKeys = new Set(current.rows.map((r: any) => r.attribute_key));
+      for (const item of items) {
+        if (currentKeys.has(item.key)) {
+          await client.query(`UPDATE ${table} SET value_state=$3, value_boolean=$4, verification_status='unverified', source_note='Edited in Roomler admin' WHERE ${idColumn}=$1::uuid AND attribute_key=$2`,
+            [entityId, item.key, item.value === 'unknown' ? 'unknown' : 'known', item.value === 'unknown' ? null : item.value === 'yes']);
+        } else {
+          await client.query(`INSERT INTO ${table} (${idColumn}, attribute_key, value_state, value_boolean, verification_status, source_note) VALUES ($1::uuid,$2,$3,$4,'unverified','Edited in Roomler admin')`,
+            [entityId, item.key, item.value === 'unknown' ? 'unknown' : 'known', item.value === 'unknown' ? null : item.value === 'yes']);
+        }
+      }
+    };
+    await saveAmenities('property_attribute_values','property_id',propertyId,body.propertyAmenities);
+
+    let savedRooms=0, savedFloors=0;
+    for (const floor of body.floors) {
+      let floorId = floor.id as string | undefined;
+      if (floorId) {
+        const updated = await client.query(`UPDATE property_floors SET floor_number=$3, floor_label=$4, notes=$5 WHERE id=$1::uuid AND property_id=$2::uuid RETURNING id`,
+          [floorId,propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
+        if (!updated.rowCount) throw new Error('A floor does not belong to this property. Reload the form and try again.');
+      } else {
+        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,'synthetic_demo') RETURNING id`,
+          [propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
+        floorId=inserted.rows[0].id;
+      }
+      savedFloors++;
+      await saveAmenities('floor_attribute_values','floor_id',floorId!,floor.amenities);
+      for (const room of floor.rooms) {
+        let roomId = room.id as string | undefined;
+        if (roomId) {
+          const updated = await client.query(`UPDATE rooms SET floor_id=$2::uuid, room_label=$3, room_type=$4, max_occupants=$5, furnishing_status=$6, room_status=$7, attached_bathroom=$8, wifi_available_in_room=$9, notes=$10 WHERE id=$1::uuid AND EXISTS (SELECT 1 FROM property_floors WHERE id=$2::uuid AND property_id=$11::uuid) RETURNING id`,
+            [roomId,floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null,propertyId]);
+          if (!updated.rowCount) throw new Error('A room does not belong to this property. Reload the form and try again.');
+        } else {
+          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,'synthetic_demo') RETURNING id`,
+            [floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null]);
+          roomId=inserted.rows[0].id;
+        }
+        savedRooms++;
+        await saveAmenities('room_attribute_values','room_id',roomId!,room.amenities);
+        // Existing offers are matched by ID and updated; omitted offers are retained.
+        for (const offer of room.offers) {
+          const expected = room.type === 'shared' ? 'per_bed' : 'per_room';
+          if (offer.id && uuidPattern.test(offer.id)) {
+            const updated = await client.query(`UPDATE room_prices SET amount=$3, rent_basis=$4, stay_period='monthly', food_option=$5, offer_status=$6, is_current=TRUE WHERE id=$1::uuid AND room_id=$2::uuid RETURNING id`,
+              [offer.id,roomId,Number(offer.amount),offer.rentBasis ?? expected,offer.foodOption,offer.status]);
+            if (!updated.rowCount) throw new Error('A rent offer does not belong to this room. Reload and try again.');
+          } else {
+            await client.query(`INSERT INTO room_prices (room_id,rent_basis,stay_period,amount,currency,valid_from,is_current,data_label,food_option,offer_status) VALUES ($1::uuid,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,'synthetic_demo',$4,$5)`,
+              [roomId,offer.rentBasis ?? expected,Number(offer.amount),offer.foodOption,offer.status]);
+          }
+        }
+        for (const charge of room.charges) {
+          if (charge.id && uuidPattern.test(charge.id)) {
+            const updated = await client.query(`UPDATE room_charges SET charge_name=$3,amount=$4,charge_basis=$5,mandatory=$6,description=$7 WHERE id=$1::uuid AND room_id=$2::uuid RETURNING id`,
+              [charge.id,roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null]);
+            if (!updated.rowCount) throw new Error('A charge does not belong to this room. Reload and try again.');
+          } else {
+            await client.query(`INSERT INTO room_charges (room_id,charge_name,amount,currency,charge_basis,mandatory,description,verification_status,data_label) VALUES ($1::uuid,$2,$3,'INR',$4,$5,$6,'unverified','synthetic_demo')`,
+              [roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null]);
+          }
+        }
+      }
+    }
+    await client.query('COMMIT');
+    res.json({ message: 'Inventory changes saved. Omitted floors, rooms, rent offers and charges were not deleted.', floors: savedFloors, rooms: savedRooms });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Failed to save property inventory:', error);
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save property inventory.' });
+  } finally { client.release(); }
+});
+
 // Listing status is a separate capability from editing and verification.
 app.patch('/api/admin/properties/:id/status', async (req, res) => {
   if (!developmentOnlyPropertyAction(res)) return;
