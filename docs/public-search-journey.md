@@ -43,7 +43,7 @@ The public UI references `/roomler-logo.png`. The lowercase and uppercase logo p
 
 ## Known limitations / release blockers
 
-- A local frontend build, backend typecheck, and live API/SQL tests have not been run for this branch.
+- GitHub Actions run #20 passed frontend build/lint and backend typecheck on an earlier branch revision. Later commits still need a fresh CI run. Live API/SQL tests have not been run.
 - The backend uses `http://localhost:3001/api/public` in the frontend; deployment requires a configured API base URL and CORS origin.
 - Owner contact details are not returned by the public API, so the details page explains that contact is not yet connected.
 - Login, owner listing submission, and flatmate discovery are not implemented in the public journey.
