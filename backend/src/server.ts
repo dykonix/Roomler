@@ -393,6 +393,222 @@ app.get('/api/admin/properties', async (_req, res) => {
   }
 });
 
+
+/**
+ * Property action capability names are intentionally separate so they can map
+ * to role permissions when authentication/authorization is added.
+ * These mutating endpoints remain development-only until that layer exists.
+ */
+const propertyActionCapabilities = {
+  view: 'properties.view',
+  edit: 'properties.edit',
+  changeStatus: 'properties.status.change',
+  delete: 'properties.delete',
+} as const;
+
+function developmentOnlyPropertyAction(res: express.Response): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(503).json({
+      error: 'Property management actions are disabled until authentication and authorization are configured.',
+    });
+    return false;
+  }
+  return true;
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// View one property's stored scalar details. Related inventory is intentionally
+// not rewritten by the scalar edit endpoint, preventing accidental data loss.
+app.get('/api/admin/properties/:id', async (req, res) => {
+  if (!uuidPattern.test(req.params.id)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.title, p.description, p.property_type, p.city_id, c.canonical_name AS city,
+        p.locality_id, l.canonical_name AS locality, p.owner_id, o.display_name AS owner_name,
+        p.address, p.google_maps_url, p.latitude, p.longitude, p.gender_eligibility,
+        p.couples_allowed, p.co_ed_rooms_allowed, p.cooking_allowed, p.house_rules_notes,
+        p.security_deposit_basis, p.security_deposit_amount, p.security_deposit_refund_policy,
+        p.security_deposit_deduction_notes, p.notice_period_value, p.notice_period_unit,
+        p.electricity_billing_mode, p.electricity_rate_per_unit, p.four_wheeler_parking_spaces,
+        p.two_wheeler_parking_spaces, p.listing_status, p.listing_source,
+        p.verification_status, p.last_confirmed_at, p.data_label, p.created_at, p.updated_at,
+        COALESCE(image_data.images, '[]'::json) AS images
+      FROM properties p
+      LEFT JOIN cities c ON c.id = p.city_id
+      LEFT JOIN localities l ON l.id = p.locality_id
+      LEFT JOIN owners o ON o.id = p.owner_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'id', pi.id, 'image_url', pi.image_url, 'storage_key', pi.storage_key,
+          'image_label', pi.image_label, 'alt_text', pi.alt_text,
+          'display_order', pi.display_order, 'is_cover', pi.is_cover,
+          'verification_status', pi.verification_status, 'data_label', pi.data_label
+        ) ORDER BY pi.is_cover DESC, pi.display_order, pi.id) AS images
+        FROM property_images pi WHERE pi.property_id = p.id
+      ) image_data ON TRUE
+      WHERE p.id = $1::uuid
+    `, [req.params.id]);
+
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Property not found.' });
+      return;
+    }
+    res.json({ data: result.rows[0] });
+  } catch (error) {
+    console.error('Failed to fetch property details:', error);
+    res.status(500).json({ error: 'Unable to load property details.' });
+  }
+});
+
+// Update editable property-level fields only. Floors, rooms, beds, pricing,
+// amenities, charges and photos are left untouched by this operation.
+app.patch('/api/admin/properties/:id', async (req, res) => {
+  if (!developmentOnlyPropertyAction(res)) return;
+  if (!uuidPattern.test(req.params.id)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+
+  const body = req.body as Record<string, unknown>;
+  const { title, description, propertyType, cityId, localityId, ownerId, address,
+    googleMapsUrl, genderEligibility, couplesAllowed, coEdRoomsAllowed, cookingAllowed } = body;
+
+  if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 150) {
+    res.status(400).json({ error: 'Title must contain 3 to 150 characters.' });
+    return;
+  }
+  if (typeof description !== 'string' || description.length > 10000) {
+    res.status(400).json({ error: 'Description must be text with at most 10,000 characters.' });
+    return;
+  }
+  if (propertyType !== 'PG' && propertyType !== 'Flat') {
+    res.status(400).json({ error: 'Property type must be PG or Flat.' });
+    return;
+  }
+  if (typeof cityId !== 'string' || !uuidPattern.test(cityId) ||
+      typeof ownerId !== 'string' || !uuidPattern.test(ownerId)) {
+    res.status(400).json({ error: 'Select a valid city and owner.' });
+    return;
+  }
+  if (localityId !== null && localityId !== '' && (typeof localityId !== 'string' || !uuidPattern.test(localityId))) {
+    res.status(400).json({ error: 'Select a valid locality or leave it unspecified.' });
+    return;
+  }
+  if (genderEligibility !== null && !['Boys', 'Girls', 'Unisex'].includes(String(genderEligibility))) {
+    res.status(400).json({ error: 'Select a supported occupancy eligibility or Unknown.' });
+    return;
+  }
+  for (const [name, value] of [['couplesAllowed', couplesAllowed], ['coEdRoomsAllowed', coEdRoomsAllowed], ['cookingAllowed', cookingAllowed]] as const) {
+    if (value !== null && typeof value !== 'boolean') {
+      res.status(400).json({ error: `${name} must be Yes, No, or Unknown.` });
+      return;
+    }
+  }
+  if (address !== null && typeof address !== 'string' || googleMapsUrl !== null && typeof googleMapsUrl !== 'string') {
+    res.status(400).json({ error: 'Address and map URL must be text or empty.' });
+    return;
+  }
+
+  try {
+    const refs = await pool.query(`
+      SELECT c.id AS city_id, o.id AS owner_id, l.id AS locality_id
+      FROM cities c CROSS JOIN owners o
+      LEFT JOIN localities l ON l.id = NULLIF($3, '')::uuid AND l.city_id = c.id
+      WHERE c.id = $1::uuid AND c.is_active = TRUE
+        AND o.id = $2::uuid AND o.owner_status = 'active'
+    `, [cityId, ownerId, localityId ?? '']);
+    if (refs.rowCount !== 1 || (localityId && refs.rows[0].locality_id !== localityId)) {
+      res.status(400).json({ error: 'Selected city, locality, or active owner is invalid.' });
+      return;
+    }
+
+    const result = await pool.query(`
+      UPDATE properties SET
+        title = $2, description = $3, property_type = $4, city_id = $5,
+        locality_id = NULLIF($6, '')::uuid, owner_id = $7,
+        address = NULLIF($8, ''), google_maps_url = NULLIF($9, ''),
+        gender_eligibility = $10, couples_allowed = $11, co_ed_rooms_allowed = $12,
+        cooking_allowed = $13, updated_at = now()
+      WHERE id = $1::uuid
+      RETURNING id, title, listing_status, updated_at
+    `, [req.params.id, title.trim(), description, propertyType, cityId, localityId ?? '',
+      ownerId, typeof address === 'string' ? address.trim() : '',
+      typeof googleMapsUrl === 'string' ? googleMapsUrl.trim() : '',
+      genderEligibility, couplesAllowed, coEdRoomsAllowed, cookingAllowed]);
+
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Property not found.' });
+      return;
+    }
+    res.json({ data: result.rows[0], message: 'Property details updated.' });
+  } catch (error) {
+    console.error('Failed to update property:', error);
+    res.status(500).json({ error: 'Unable to update property details.' });
+  }
+});
+
+// Listing status is a separate capability from editing and verification.
+app.patch('/api/admin/properties/:id/status', async (req, res) => {
+  if (!developmentOnlyPropertyAction(res)) return;
+  if (!uuidPattern.test(req.params.id)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+
+  const { status } = req.body as { status?: unknown };
+  if (typeof status !== 'string' || !['draft', 'published', 'paused', 'removed'].includes(status)) {
+    res.status(400).json({ error: 'Status must be draft, published, paused, or removed.' });
+    return;
+  }
+
+  try {
+    const result = await pool.query(`
+      UPDATE properties SET listing_status = $2, updated_at = now()
+      WHERE id = $1::uuid
+      RETURNING id, title, listing_status, updated_at
+    `, [req.params.id, status]);
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Property not found.' });
+      return;
+    }
+    res.json({ data: result.rows[0], message: 'Listing status updated.' });
+  } catch (error) {
+    console.error('Failed to change property status:', error);
+    res.status(500).json({ error: 'Unable to change listing status.' });
+  }
+});
+
+// Hard deletion cascades through PostgreSQL-linked property records. S3 objects
+// are not deleted here; safe orphan cleanup requires a separate storage workflow.
+app.delete('/api/admin/properties/:id', async (req, res) => {
+  if (!developmentOnlyPropertyAction(res)) return;
+  if (!uuidPattern.test(req.params.id)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM properties WHERE id = $1::uuid RETURNING id, title',
+      [req.params.id],
+    );
+    if (!result.rowCount) {
+      res.status(404).json({ error: 'Property not found.' });
+      return;
+    }
+    res.json({ message: 'Property deleted from the database.', data: result.rows[0], storageCleanup: 'pending' });
+  } catch (error) {
+    console.error('Failed to delete property:', error);
+    res.status(500).json({ error: 'Unable to delete property. Related records may prevent deletion.' });
+  }
+});
+
 // Prepare a short-lived, direct-to-S3 upload
 app.post('/api/admin/media/presign-upload', async (req, res) => {
   // Temporary development-only restriction.
