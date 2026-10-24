@@ -114,7 +114,7 @@ export default function SeoLandingPage() {
       robots.setAttribute('name', 'robots')
       document.head.appendChild(robots)
     }
-    robots.setAttribute('content', import.meta.env.VITE_INDEXING_ENABLED === 'true' ? 'index,follow' : 'noindex,nofollow')
+    robots.setAttribute('content', import.meta.env.VITE_INDEXING_ENABLED === 'true' && city && rows.length > 0 ? 'index,follow' : 'noindex,nofollow')
     let canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null
     if (!canonical) {
       canonical = document.createElement('link')
@@ -122,7 +122,7 @@ export default function SeoLandingPage() {
       document.head.appendChild(canonical)
     }
     canonical.href = window.location.origin + window.location.pathname
-  }, [city, heading, locality])
+  }, [city, heading, locality, rows.length])
 
   return <div className="roomler-public">
     <header className="public-header">
