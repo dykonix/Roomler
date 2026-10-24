@@ -15,7 +15,7 @@ type Listing = {
   security_deposit_refund_policy: string | null; notice_period_value: number | string | null; notice_period_unit: string | null
   electricity_billing_mode: string | null; electricity_rate_per_unit: number | string | null
 }
-const API = 'http://localhost:3001/api/public'
+const API = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\\/$/, '') + '/api/public'
 const initialParams = new URLSearchParams(location.search)
 const demo = import.meta.env.DEV || initialParams.get('demo') === 'true' || initialParams.get('includeDemo') === 'true'
 const money = (v: number | string | null | undefined, currency = 'INR') => v == null || v === '' ? 'Price not provided' : new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Number(v))
