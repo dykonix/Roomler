@@ -143,7 +143,7 @@ export default function SeoLandingPage() {
       {error && <div className="state-panel error">{error}</div>}
       {busy ? <div className="state-panel">Loading listings…</div>
         : !error && rows.length === 0 ? <div className="state-panel"><h2>No published listings found yet</h2><p>This page is ready, but there are no matching published real-submitted listings to show. We will not fill it with invented properties.</p><a href="/search">Try the general search</a></div>
-        : <div className="listing-grid">{rows.map(property => <a className="listing-card seo-listing-card" href={`/property/${property.id}`} key={property.id}>
+        : <div className="listing-grid">{rows.map(property => <a className="listing-card seo-listing-card" href={`/property/${slugify([property.title, property.locality, property.city].filter(Boolean).join(' '))}--${property.id}`} key={property.id}>
           <div className="listing-image">{property.images?.[0]?.image_url && !property.images[0].image_url.startsWith('s3://')
             ? <img src={property.images[0].image_url} alt={property.images[0].alt_text || property.title}/>
             : <div className="image-unavailable">Photo not available</div>}
