@@ -108,6 +108,20 @@ export default function SeoLandingPage() {
     description.setAttribute('content', city
       ? `Explore monthly PG listings in ${locality || city.name}. Compare available details, rental terms and confirmed amenities on Roomler.`
       : 'Explore monthly PG and flat listings by city, budget, eligibility and lifestyle preferences on Roomler.')
+    let robots = document.querySelector('meta[name="robots"]')
+    if (!robots) {
+      robots = document.createElement('meta')
+      robots.setAttribute('name', 'robots')
+      document.head.appendChild(robots)
+    }
+    robots.setAttribute('content', import.meta.env.VITE_INDEXING_ENABLED === 'true' ? 'index,follow' : 'noindex,nofollow')
+    let canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null
+    if (!canonical) {
+      canonical = document.createElement('link')
+      canonical.rel = 'canonical'
+      document.head.appendChild(canonical)
+    }
+    canonical.href = window.location.origin + window.location.pathname
   }, [city, heading, locality])
 
   return <div className="roomler-public">
