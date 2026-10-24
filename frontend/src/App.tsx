@@ -831,7 +831,8 @@ function App() {
                 {usableUrl ? <img src={image.image_url} alt={image.alt_text || image.image_label || `Property photo ${index + 1}`} /> : <div className="edit-photo-unavailable">Image preview unavailable</div>}
                 <figcaption><strong>{image.image_label?.replaceAll('_', ' ') || 'Photo'}</strong>{image.is_cover && <span className="edit-photo-cover">Cover photo</span>}<small>{image.alt_text || 'No alt text provided'}</small></figcaption>
               </figure>;
-            })}</div> : <p c{inventoryValues && (
+            })}</div> : <p className="form-help">No photos are available for this property.</p>}
+          {inventoryValues && (
               <section className="edit-inventory">
                 <h3>Property amenities</h3>
                 <p className="form-help">Unknown means the information has not been confirmed. Saving does not verify an attribute.</p>
@@ -969,21 +970,6 @@ function App() {
                 <p className="form-help">Removing floors, rooms, prices or charges is intentionally not supported here; omitted records remain in the database. Photos remain display-only.</p>
               </section>
             )}
-            p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,offers:r.offers.map((o:any,k:number)=>k===oi?{...o,foodOption:e.target.value}:o)})})) )}><option value="unknown">Unknown</option><option value="included">Included</option><option value="excluded">Excluded</option></select></label>
-                  </div>)}
-                  <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,offers:[...r.offers,{amount:'',rentBasis:r.type==='shared'?'per_bed':'per_room',foodOption:'unknown',status:'unknown'}]})}))})}>＋ Add rent offer</button>
-                  <strong>Additional room charges</strong>
-                  {room.charges.map((charge:any, ci:number)=><div className="form-row" key={charge.id ?? `charge-${ci}`}>
-                    <label className="form-field">Charge name<input required value={charge.name} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,charges:r.charges.map((ch:any,k:number)=>k===ci?{...ch,name:e.target.value}:ch)})})) )}/></label>
-                    <label className="form-field">Amount (₹)<input type="number" min="0" required value={charge.amount} onChange={e=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,charges:r.charges.map((ch:any,k:number)=>k===ci?{...ch,amount:e.target.value}:ch)})})) )}/></label>
-                  </div>)}
-                  <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:f.rooms.map((r:any,j:number)=>j!==ri?r:{...r,charges:[...r.charges,{name:'',amount:'',basis:'monthly',mandatory:false,description:''}]})}))})}>＋ Add charge</button>
-                </section>)}
-                <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:p.floors.map((f:any,i:number)=>i!==fi?f:{...f,rooms:[...f.rooms,{label:`Room ${f.rooms.length+1}`,type:'single',maxOccupants:'1',status:'unknown',furnishingStatus:'',attachedBathroom:'unknown',wifiAvailableInRoom:'unknown',notes:'',amenities:formOptions.amenities.filter(a=>a.scope==='room').map(a=>({key:a.attribute_key,value:'unknown'})),offers:[{amount:'',rentBasis:'per_room',foodOption:'unknown',status:'unknown'}],charges:[],beds:[]}]})})))}>＋ Add room to floor</button>
-              </section>)}
-              <button type="button" className="secondary-button compact-button" onClick={()=>setInventoryValues((p:any)=>({...p,floors:[...p.floors,{number:String(p.floors.length),label:`Floor ${p.floors.length}`,notes:'',amenities:formOptions.amenities.filter(a=>a.scope==='floor').map(a=>({key:a.attribute_key,value:'unknown'})),rooms:[{label:'Room 1',type:'single',maxOccupants:'1',status:'unknown',furnishingStatus:'',attachedBathroom:'unknown',wifiAvailableInRoom:'unknown',notes:'',amenities:formOptions.amenities.filter(a=>a.scope==='room').map(a=>({key:a.attribute_key,value:'unknown'})),offers:[{amount:'',rentBasis:'per_room',foodOption:'unknown',status:'unknown'}],charges:[],beds:[]}] }]}))}>＋ Add floor</button>
-              <p className="form-help">Safety: removing floors, rooms, prices or charges is intentionally not supported here; omitted records remain in the database. Photos remain display-only.</p>
-            </section>}
             {actionError && <p className="form-error" role="alert">{actionError}</p>}
             <div className="modal-footer"><button className="secondary-button" type="button" disabled={actionBusy} onClick={()=>{setEditingProperty(null);setEditValues(null);setActionError('')}}>Cancel</button><button className="primary-button" type="submit" disabled={actionBusy}>{actionBusy ? 'Saving…' : 'Save changes'}</button></div>
           </form>
