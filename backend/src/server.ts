@@ -793,6 +793,8 @@ app.get('/api/admin/properties/:id', async (req, res) => {
         p.electricity_billing_mode, p.electricity_rate_per_unit, p.four_wheeler_parking_spaces,
         p.two_wheeler_parking_spaces, p.listing_status, p.listing_source,
         p.verification_status, p.last_confirmed_at, p.data_label, p.created_at, p.updated_at,
+        COALESCE(property_amenities.items, '[]'::json) AS property_amenities,
+        COALESCE(floor_data.items, '[]'::json) AS floors,
         COALESCE(image_data.images, '[]'::json) AS images
       FROM properties p
       LEFT JOIN cities c ON c.id = p.city_id
