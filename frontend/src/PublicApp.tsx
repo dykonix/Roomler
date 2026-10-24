@@ -20,6 +20,9 @@ const initialParams = new URLSearchParams(location.search)
 const demo = import.meta.env.DEV || initialParams.get('demo') === 'true' || initialParams.get('includeDemo') === 'true'
 const money = (v: number | string | null | undefined, currency = 'INR') => v == null || v === '' ? 'Price not provided' : new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Number(v))
 const yesNo = (v: boolean | null | undefined) => v === true ? 'Yes' : v === false ? 'No' : 'Not confirmed'
+const slugify = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const propertyPath = (item: Listing) => '/property/' + slugify([item.title, item.locality, item.city].filter(Boolean).join(' ')) + '--' + item.id
+const propertyIdFromPath = (path: string) => path.split('/').pop()?.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)?.[0] || ''
 
 export default function PublicApp() {
  const [page,setPage] = useState<'home'|'results'|'detail'>(location.pathname.startsWith('/property/')?'detail':location.pathname==='/search'?'results':'home')
@@ -87,7 +90,7 @@ export default function PublicApp() {
   finally {setBusy(false)}
  }
  async function open(item: Listing) {
-  setItem(item);setPage('detail');setError('');history.pushState({},'','/property/'+item.id+(demo?'?demo=true':''))
+  setItem(item);setPage('detail');setError('');history.pushState({},'',propertyPath(item)+(demo?'?demo=true':''))
   try {const r=await fetch(API+'/properties/'+item.id+(demo?'?includeDemo=true':''));const b=await r.json();if(!r.ok)throw new Error(b.error||'Property not found');setItem(b.data)}
   catch(e){setError(e instanceof Error?e.message:'Unable to load property')}
  }
@@ -124,6 +127,19 @@ export default function PublicApp() {
   if(location.pathname==='/search'||location.pathname.startsWith('/property/')) loadRoute()
   return ()=>window.removeEventListener('popstate',handlePopState)
  },[])
+  useEffect(() => {
+   if (page !== 'detail' || !item) return
+   document.title = `${item.title} in ${item.locality || item.city} | Roomler`
+   let description = document.querySelector('meta[name="description"]')
+   if (!description) { description = document.createElement('meta'); description.setAttribute('name', 'description'); document.head.appendChild(description) }
+   description.setAttribute('content', `View monthly rent, eligibility, amenities and rental terms for ${item.title} in ${item.locality || item.city}. Details not provided by the listing are shown as unconfirmed.`)
+   let robots = document.querySelector('meta[name="robots"]')
+   if (!robots) { robots = document.createElement('meta'); robots.setAttribute('name', 'robots'); document.head.appendChild(robots) }
+   robots.setAttribute('content', import.meta.env.VITE_INDEXING_ENABLED === 'true' && item.data_label === 'real_submitted' && item.listing_status === 'published' ? 'index,follow' : 'noindex,nofollow')
+   let canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null
+   if (!canonical) { canonical = document.createElement('link'); canonical.rel = 'canonical'; document.head.appendChild(canonical) }
+   canonical.href = window.location.origin + window.location.pathname
+  }, [page, item])
  const shown=[...rows].sort((a,b)=>sort==='price'?(Number(a.starting_monthly_amount??Infinity)-Number(b.starting_monthly_amount??Infinity)):0)
  return <div className="roomler-public">
   <header className="public-header"><a className="public-logo" href="/"><img src="/roomler-logo.png" alt="Roomler — Your space. Your vibe."/></a><form className="header-search" onSubmit={e=>{e.preventDefault();void search()}}><select aria-label="City" value={city} onChange={e=>setCity(e.target.value)}><option value="">All cities</option>{cities.map(c=><option key={c.id} value={c.name}>{c.name}, {c.state_name}</option>)}</select><input aria-label="Describe your stay" placeholder="Describe the stay you need…" value={query} onChange={e=>setQuery(e.target.value)}/><button>⌕</button></form><nav><span className="nav-soon">Login · Soon</span><span className="nav-soon post-property">Post Property · Soon</span></nav></header>
