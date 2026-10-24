@@ -56,7 +56,19 @@ type PropertyDetail = {
   security_deposit_refund_policy: string | null; notice_period_value: string | number | null;
   notice_period_unit: string | null; electricity_billing_mode: string | null;
   electricity_rate_per_unit: string | number | null; four_wheeler_parking_spaces: number | null;
-  two_wheeler_parking_spaces: number | null; images: { id: string; image_url: string; image_label: string | null; alt_text: string | null; is_cover: boolean }[];
+  two_wheeler_parking_spaces: number | null;
+  property_amenities: { key: string; value: 'yes' | 'no' | 'unknown'; verification_status?: string; source_note?: string | null }[];
+  floors: { id: string; number: number; label: string; notes: string | null;
+    amenities: { key: string; value: 'yes' | 'no' | 'unknown'; verification_status?: string; source_note?: string | null }[];
+    rooms: { id: string; label: string; type: 'single' | 'shared'; maxOccupants: number; status: string;
+      furnishingStatus: string | null; attachedBathroom: boolean | null; wifiAvailableInRoom: boolean | null; notes: string | null;
+      amenities: { key: string; value: 'yes' | 'no' | 'unknown'; verification_status?: string; source_note?: string | null }[];
+      offers: { id: string; amount: string | number; currency: string; rentBasis: string; stayPeriod: string; foodOption: string; status: string }[];
+      charges: { id: string; name: string; amount: string | number; currency: string; basis: string; mandatory: boolean | null; description: string | null }[];
+      beds: { id: string; label: string; type: string; status: string }[];
+    }[];
+  }[];
+  images: { id: string; image_url: string; image_label: string | null; alt_text: string | null; is_cover: boolean }[];
 }
 type PropertyEditValues = {
   title: string; description: string; propertyType: 'PG' | 'Flat'; cityId: string;
@@ -160,6 +172,7 @@ function App() {
   const [detailProperty, setDetailProperty] = useState<PropertyDetail | null>(null)
   const [editingProperty, setEditingProperty] = useState<PropertyDetail | null>(null)
   const [editValues, setEditValues] = useState<PropertyEditValues | null>(null)
+  const [inventoryValues, setInventoryValues] = useState<any>(null)
   const [deleteTarget, setDeleteTarget] = useState<Property | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -417,6 +430,23 @@ function App() {
       setFormOptions(options)
       const detail = await loadPropertyDetail(property.id)
       setEditingProperty(detail)
+      setInventoryValues({
+        propertyAmenities: (detail.property_amenities ?? []).map(a => ({ key: a.key, value: a.value })),
+        floors: (detail.floors ?? []).map(f => ({
+          id: f.id, number: String(f.number), label: f.label, notes: f.notes ?? '',
+          amenities: (f.amenities ?? []).map(a => ({ key: a.key, value: a.value })),
+          rooms: (f.rooms ?? []).map(r => ({
+            id: r.id, label: r.label, type: r.type, maxOccupants: String(r.maxOccupants),
+            status: r.status ?? 'unknown', furnishingStatus: r.furnishingStatus ?? '',
+            attachedBathroom: r.attachedBathroom == null ? 'unknown' : r.attachedBathroom ? 'yes' : 'no',
+            wifiAvailableInRoom: r.wifiAvailableInRoom == null ? 'unknown' : r.wifiAvailableInRoom ? 'yes' : 'no',
+            notes: r.notes ?? '', amenities: (r.amenities ?? []).map(a => ({ key: a.key, value: a.value })),
+            offers: (r.offers ?? []).map(o => ({ id: o.id, amount: String(o.amount), rentBasis: o.rentBasis, foodOption: o.foodOption ?? 'unknown', status: o.status ?? 'unknown' })),
+            charges: (r.charges ?? []).map(ch => ({ id: ch.id, name: ch.name, amount: String(ch.amount), basis: ch.basis, mandatory: ch.mandatory ?? false, description: ch.description ?? '' })),
+            beds: r.beds ?? [],
+          })),
+        })),
+      })
       setEditValues({
         title: detail.title, description: detail.description ?? '', propertyType: detail.property_type,
         cityId: detail.city_id, localityId: detail.locality_id ?? '', ownerId: detail.owner_id,
@@ -471,9 +501,28 @@ function App() {
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error ?? `Save failed (${response.status}).`)
-      setEditingProperty(null); setEditValues(null)
+      const inventoryResponse = await fetch(`http://localhost:3001/api/admin/properties/${editingProperty.id}/inventory`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyAmenities: inventoryValues.propertyAmenities,
+          floors: inventoryValues.floors.map((floor: any) => ({
+            ...floor, number: Number(floor.number),
+            rooms: floor.rooms.map((room: any) => ({
+              ...room, maxOccupants: Number(room.maxOccupants),
+              furnishingStatus: room.furnishingStatus || null,
+              attachedBathroom: room.attachedBathroom === 'unknown' ? null : room.attachedBathroom === 'yes',
+              wifiAvailableInRoom: room.wifiAvailableInRoom === 'unknown' ? null : room.wifiAvailableInRoom === 'yes',
+              offers: room.offers.map((offer: any) => ({ ...offer, amount: Number(offer.amount) })),
+              charges: room.charges.map((charge: any) => ({ ...charge, amount: Number(charge.amount) })),
+            })),
+          })),
+        }),
+      })
+      const inventoryResult = await inventoryResponse.json()
+      if (!inventoryResponse.ok) throw new Error(inventoryResult.error ?? `Inventory save failed (${inventoryResponse.status}).`)
+      setEditingProperty(null); setEditValues(null); setInventoryValues(null)
       await refreshProperties()
-      showDemoToast('Property details updated. Existing rooms, prices and photos were preserved.')
+      showDemoToast('Property details, inventory and amenities saved. Omitted records were preserved.')
     } catch (error) { setActionError(error instanceof Error ? error.message : 'Unable to update property.') }
     finally { setActionBusy(false) }
   }
@@ -496,6 +545,84 @@ function App() {
   function showDemoToast(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(''), 3200)
+  }
+
+
+  function updateFloor(fi: number, patch: Record<string, any>) {
+    setInventoryValues((prev: any) => ({
+      ...prev,
+      floors: prev.floors.map((floor: any, index: number) => index === fi ? { ...floor, ...patch } : floor),
+    }))
+  }
+
+  function updateRoom(fi: number, ri: number, patch: Record<string, any>) {
+    setInventoryValues((prev: any) => ({
+      ...prev,
+      floors: prev.floors.map((floor: any, floorIndex: number) => floorIndex !== fi ? floor : ({
+        ...floor,
+        rooms: floor.rooms.map((room: any, roomIndex: number) => roomIndex === ri ? { ...room, ...patch } : room),
+      })),
+    }))
+  }
+
+  function updateAmenity(scope: 'property' | 'floor' | 'room', key: string, value: string, fi?: number, ri?: number) {
+    const updateItems = (items: any[]) => items.some((item: any) => item.key === key)
+      ? items.map((item: any) => item.key === key ? { ...item, value } : item)
+      : [...items, { key, value }]
+    setInventoryValues((prev: any) => {
+      if (scope === 'property') return { ...prev, propertyAmenities: updateItems(prev.propertyAmenities) }
+      return {
+        ...prev,
+        floors: prev.floors.map((floor: any, floorIndex: number) => {
+          if (floorIndex !== fi) return floor
+          if (scope === 'floor') return { ...floor, amenities: updateItems(floor.amenities) }
+          return {
+            ...floor,
+            rooms: floor.rooms.map((room: any, roomIndex: number) => roomIndex === ri
+              ? { ...room, amenities: updateItems(room.amenities) }
+              : room),
+          }
+        }),
+      }
+    })
+  }
+
+  function updateOffer(fi: number, ri: number, oi: number, patch: Record<string, any>) {
+    const room = inventoryValues.floors[fi].rooms[ri]
+    updateRoom(fi, ri, { offers: room.offers.map((offer: any, index: number) => index === oi ? { ...offer, ...patch } : offer) })
+  }
+
+  function updateCharge(fi: number, ri: number, ci: number, patch: Record<string, any>) {
+    const room = inventoryValues.floors[fi].rooms[ri]
+    updateRoom(fi, ri, { charges: room.charges.map((charge: any, index: number) => index === ci ? { ...charge, ...patch } : charge) })
+  }
+
+  function addRoom(fi: number) {
+    const floor = inventoryValues.floors[fi]
+    updateFloor(fi, {
+      rooms: [...floor.rooms, {
+        label: `Room ${floor.rooms.length + 1}`, type: 'single', maxOccupants: '1', status: 'unknown',
+        furnishingStatus: '', attachedBathroom: 'unknown', wifiAvailableInRoom: 'unknown', notes: '',
+        amenities: formOptions.amenities.filter((item: any) => item.scope === 'room').map((item: any) => ({ key: item.attribute_key, value: 'unknown' })),
+        offers: [{ amount: '', rentBasis: 'per_room', foodOption: 'unknown', status: 'unknown' }], charges: [], beds: [],
+      }],
+    })
+  }
+
+  function addFloor() {
+    setInventoryValues((prev: any) => ({
+      ...prev,
+      floors: [...prev.floors, {
+        number: String(prev.floors.length), label: `Floor ${prev.floors.length}`, notes: '',
+        amenities: formOptions.amenities.filter((item: any) => item.scope === 'floor').map((item: any) => ({ key: item.attribute_key, value: 'unknown' })),
+        rooms: [{
+          label: 'Room 1', type: 'single', maxOccupants: '1', status: 'unknown', furnishingStatus: '',
+          attachedBathroom: 'unknown', wifiAvailableInRoom: 'unknown', notes: '',
+          amenities: formOptions.amenities.filter((item: any) => item.scope === 'room').map((item: any) => ({ key: item.attribute_key, value: 'unknown' })),
+          offers: [{ amount: '', rentBasis: 'per_room', foodOption: 'unknown', status: 'unknown' }], charges: [], beds: [],
+        }],
+      }],
+    }))
   }
 
   return (
@@ -693,30 +820,180 @@ function App() {
       </div>}
 
       {editingProperty && editValues && <div className="modal-backdrop" role="presentation">
-        <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
+        <section className="modal property-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
           <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
-          <div className="modal-notice">This first edit pass updates property-level fields only. Existing floors, rooms, beds, pricing, charges, amenities and photos are preserved and are not editable here yet.</div>
+          <div className="modal-notice">Edit the saved property using the same section-based layout as Add Property. Unknown values remain unknown. Existing records not represented in editable fields are preserved; photos are currently display-only.</div>
           <form onSubmit={savePropertyEdit}>
-            <label className="form-field">Property title *<input required minLength={3} maxLength={150} value={editValues.title} onChange={e => setEditValues({...editValues,title:e.target.value})}/></label>
-            <label className="form-field">Description<textarea rows={4} maxLength={10000} value={editValues.description} onChange={e => setEditValues({...editValues,description:e.target.value})}/></label>
-            <div className="form-row">
-              <label className="form-field">City *<select required value={editValues.cityId} onChange={e => setEditValues({...editValues,cityId:e.target.value,localityId:''})}><option value="">Select city</option>{formOptions.cities.map(city=><option key={city.id} value={city.id}>{city.name}, {city.state_name}</option>)}</select></label>
-              <label className="form-field">Property type<select value={editValues.propertyType} onChange={e => setEditValues({...editValues,propertyType:e.target.value as 'PG'|'Flat'})}><option value="PG">PG</option><option value="Flat">Flat</option></select></label>
-            </div>
-            <div className="form-row">
-              <label className="form-field">Locality<select value={editValues.localityId} onChange={e=>setEditValues({...editValues,localityId:e.target.value})}><option value="">Unknown / not specified</option>{formOptions.localities.filter(l=>l.city_id===editValues.cityId).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
-              <label className="form-field">Owner *<select required value={editValues.ownerId} onChange={e=>setEditValues({...editValues,ownerId:e.target.value})}><option value="">Select owner</option>{formOptions.owners.map(owner=><option key={owner.id} value={owner.id}>{owner.name}</option>)}</select></label>
-            </div>
-            <label className="form-field">Address<input value={editValues.address} onChange={e=>setEditValues({...editValues,address:e.target.value})}/></label>
-            <label className="form-field">Google Maps URL<input type="url" value={editValues.googleMapsUrl} onChange={e=>setEditValues({...editValues,googleMapsUrl:e.target.value})}/></label>
-            <div className="form-row">
-              <label className="form-field">Occupancy eligibility<select value={editValues.genderEligibility} onChange={e=>setEditValues({...editValues,genderEligibility:e.target.value})}><option value="unknown">Unknown</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Unisex">Unisex</option></select></label>
-              <label className="form-field">Couples allowed<select value={editValues.couplesAllowed} onChange={e=>setEditValues({...editValues,couplesAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
-            </div>
-            <div className="form-row">
-              <label className="form-field">Co-ed rooms allowed<select value={editValues.coEdRoomsAllowed} onChange={e=>setEditValues({...editValues,coEdRoomsAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
-              <label className="form-field">Cooking allowed<select value={editValues.cookingAllowed} onChange={e=>setEditValues({...editValues,cookingAllowed:e.target.value})}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
-            </div>
+          <h3 className="form-section-title">1. Property details</h3>
+          <div className="form-row">
+            <label className="form-field">Property title *<input required minLength={3} maxLength={150} value={editValues.title} onChange={e => setEditValues({ ...editValues, title: e.target.value })} /></label>
+            <label className="form-field">Property type<select value={editValues.propertyType} onChange={e => setEditValues({ ...editValues, propertyType: e.target.value as 'PG' | 'Flat' })}><option value="PG">PG</option><option value="Flat">Flat</option></select></label>
+          </div>
+          <label className="form-field">Description<textarea rows={3} maxLength={10000} value={editValues.description} onChange={e => setEditValues({ ...editValues, description: e.target.value })} /></label>
+          <div className="form-row">
+            <label className="form-field">City *<select required value={editValues.cityId} onChange={e => setEditValues({ ...editValues, cityId: e.target.value, localityId: '' })}><option value="">Select city</option>{formOptions.cities.map(city => <option key={city.id} value={city.id}>{city.name}, {city.state_name}</option>)}</select></label>
+            <label className="form-field">Locality<select value={editValues.localityId} disabled={!editValues.cityId} onChange={e => setEditValues({ ...editValues, localityId: e.target.value })}><option value="">Unknown / not specified</option>{formOptions.localities.filter(l => l.city_id === editValues.cityId).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+          </div>
+          <label className="form-field">Owner *<select required value={editValues.ownerId} onChange={e => setEditValues({ ...editValues, ownerId: e.target.value })}><option value="">Select owner</option>{formOptions.owners.map(owner => <option key={owner.id} value={owner.id}>{owner.name} — {owner.data_label.replaceAll('_', ' ')}</option>)}</select></label>
+          <label className="form-field">Street address<input maxLength={500} value={editValues.address} onChange={e => setEditValues({ ...editValues, address: e.target.value })} /></label>
+          <label className="form-field">Google Maps URL<input type="url" value={editValues.googleMapsUrl} onChange={e => setEditValues({ ...editValues, googleMapsUrl: e.target.value })} /></label>
+          <h3 className="form-section-title">2. Eligibility and house rules</h3>
+          <div className="form-row">
+            <label className="form-field">Occupancy eligibility<select value={editValues.genderEligibility} onChange={e => setEditValues({ ...editValues, genderEligibility: e.target.value })}><option value="unknown">Unknown</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Unisex">Unisex</option></select></label>
+            <label className="form-field">Couples allowed?<select value={editValues.couplesAllowed} onChange={e => setEditValues({ ...editValues, couplesAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+          </div>
+          <div className="form-row">
+            <label className="form-field">Co-ed rooms allowed?<select value={editValues.coEdRoomsAllowed} onChange={e => setEditValues({ ...editValues, coEdRoomsAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+            <label className="form-field">Cooking allowed?<select value={editValues.cookingAllowed} onChange={e => setEditValues({ ...editValues, cookingAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+          </div>
+          <section className="edit-photo-section" aria-label="Existing property photos">
+            <div className="edit-photo-heading"><strong>Property photos</strong><span>{editingProperty.images?.length ?? 0} saved photo(s)</span></div>
+            {editingProperty.images?.length ? <div className="edit-photo-grid">{editingProperty.images.map((image, index) => {
+              const usableUrl = image.image_url && !image.image_url.startsWith('s3://');
+              return <figure className="edit-photo-card" key={image.id}>
+                {usableUrl ? <img src={image.image_url} alt={image.alt_text || image.image_label || `Property photo ${index + 1}`} /> : <div className="edit-photo-unavailable">Image preview unavailable</div>}
+                <figcaption><strong>{image.image_label?.replaceAll('_', ' ') || 'Photo'}</strong>{image.is_cover && <span className="edit-photo-cover">Cover photo</span>}<small>{image.alt_text || 'No alt text provided'}</small></figcaption>
+              </figure>;
+            })}</div> : <p className="form-help">No photos are available for this property.</p>}
+          </section>
+          {inventoryValues && (
+              <section className="edit-inventory">
+                <h3>Property amenities</h3>
+                <p className="form-help">Unknown means the information has not been confirmed. Saving does not verify an attribute.</p>
+                <div className="amenity-grid">
+                  {formOptions.amenities.filter((item: any) => item.scope === 'property').map((option: any) => {
+                    const current = inventoryValues.propertyAmenities.find((item: any) => item.key === option.attribute_key)?.value ?? 'unknown'
+                    return (
+                      <label className="amenity-row" key={option.attribute_key}>
+                        <span>{option.display_name}</span>
+                        <select value={current} onChange={(event) => updateAmenity('property', option.attribute_key, event.target.value)}>
+                          <option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option>
+                        </select>
+                      </label>
+                    )
+                  })}
+                </div>
+                <h3>Floors and rooms</h3>
+                {inventoryValues.floors.map((floor: any, fi: number) => (
+                  <section className="edit-floor" key={floor.id ?? `new-floor-${fi}`}>
+                    <h4>Floor {fi + 1}</h4>
+                    <div className="form-row">
+                      <label className="form-field">Floor number
+                        <input type="number" value={floor.number} onChange={(event) => updateFloor(fi, { number: event.target.value })} />
+                      </label>
+                      <label className="form-field">Floor label
+                        <input required value={floor.label} onChange={(event) => updateFloor(fi, { label: event.target.value })} />
+                      </label>
+                    </div>
+                    <label className="form-field">Floor notes
+                      <input value={floor.notes} onChange={(event) => updateFloor(fi, { notes: event.target.value })} />
+                    </label>
+                    <strong>Floor amenities</strong>
+                    <div className="amenity-grid">
+                      {formOptions.amenities.filter((item: any) => item.scope === 'floor').map((option: any) => {
+                        const current = floor.amenities.find((item: any) => item.key === option.attribute_key)?.value ?? 'unknown'
+                        return (
+                          <label className="amenity-row" key={option.attribute_key}>
+                            <span>{option.display_name}</span>
+                            <select value={current} onChange={(event) => updateAmenity('floor', option.attribute_key, event.target.value, fi)}>
+                              <option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option>
+                            </select>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    {floor.rooms.map((room: any, ri: number) => (
+                      <section className="edit-room" key={room.id ?? `new-room-${fi}-${ri}`}>
+                        <h4>Room {ri + 1}</h4>
+                        <div className="form-row">
+                          <label className="form-field">Room label
+                            <input required value={room.label} onChange={(event) => updateRoom(fi, ri, { label: event.target.value })} />
+                          </label>
+                          <label className="form-field">Room type
+                            <select value={room.type} onChange={(event) => updateRoom(fi, ri, { type: event.target.value, maxOccupants: event.target.value === 'single' ? '1' : (Number(room.maxOccupants) < 2 ? '2' : room.maxOccupants) })}>
+                              <option value="single">Private / single</option><option value="shared">Shared</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="form-row">
+                          <label className="form-field">Maximum occupants
+                            <input type="number" min="1" max="50" required value={room.maxOccupants} onChange={(event) => updateRoom(fi, ri, { maxOccupants: event.target.value })} />
+                          </label>
+                          <label className="form-field">Availability
+                            <select value={room.status} onChange={(event) => updateRoom(fi, ri, { status: event.target.value })}>
+                              <option value="unknown">Unknown</option><option value="available">Available</option><option value="occupied">Occupied</option><option value="reserved">Reserved</option><option value="unavailable">Unavailable</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="form-row">
+                          <label className="form-field">Furnishing
+                            <select value={room.furnishingStatus} onChange={(event) => updateRoom(fi, ri, { furnishingStatus: event.target.value })}>
+                              <option value="">Unknown</option><option value="furnished">Furnished</option><option value="semi_furnished">Semi-furnished</option><option value="unfurnished">Unfurnished</option>
+                            </select>
+                          </label>
+                          <label className="form-field">Attached bathroom
+                            <select value={room.attachedBathroom} onChange={(event) => updateRoom(fi, ri, { attachedBathroom: event.target.value })}>
+                              <option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option>
+                            </select>
+                          </label>
+                        </div>
+                        <label className="form-field">Wi-Fi available in room
+                          <select value={room.wifiAvailableInRoom} onChange={(event) => updateRoom(fi, ri, { wifiAvailableInRoom: event.target.value })}>
+                            <option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option>
+                          </select>
+                        </label>
+                        <label className="form-field">Room notes
+                          <input value={room.notes} onChange={(event) => updateRoom(fi, ri, { notes: event.target.value })} />
+                        </label>
+                        <strong>Room amenities</strong>
+                        <div className="amenity-grid">
+                          {formOptions.amenities.filter((item: any) => item.scope === 'room').map((option: any) => {
+                            const current = room.amenities.find((item: any) => item.key === option.attribute_key)?.value ?? 'unknown'
+                            return (
+                              <label className="amenity-row" key={option.attribute_key}>
+                                <span>{option.display_name}</span>
+                                <select value={current} onChange={(event) => updateAmenity('room', option.attribute_key, event.target.value, fi, ri)}>
+                                  <option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option>
+                                </select>
+                              </label>
+                            )
+                          })}
+                        </div>
+                        <strong>Monthly rent offers</strong>
+                        {room.offers.map((offer: any, oi: number) => (
+                          <div className="form-row" key={offer.id ?? `offer-${oi}`}>
+                            <label className="form-field">Monthly rent (₹)
+                              <input type="number" min="1" required value={offer.amount} onChange={(event) => updateOffer(fi, ri, oi, { amount: event.target.value })} />
+                            </label>
+                            <label className="form-field">Food option
+                              <select value={offer.foodOption} onChange={(event) => updateOffer(fi, ri, oi, { foodOption: event.target.value })}>
+                                <option value="unknown">Unknown</option><option value="included">Included</option><option value="excluded">Excluded</option>
+                              </select>
+                            </label>
+                          </div>
+                        ))}
+                        <button type="button" className="secondary-button compact-button" onClick={() => updateRoom(fi, ri, { offers: [...room.offers, { amount: '', rentBasis: room.type === 'shared' ? 'per_bed' : 'per_room', foodOption: 'unknown', status: 'unknown' }] })}>＋ Add rent offer</button>
+                        <strong>Additional room charges</strong>
+                        {room.charges.map((charge: any, ci: number) => (
+                          <div className="form-row" key={charge.id ?? `charge-${ci}`}>
+                            <label className="form-field">Charge name
+                              <input required value={charge.name} onChange={(event) => updateCharge(fi, ri, ci, { name: event.target.value })} />
+                            </label>
+                            <label className="form-field">Amount (₹)
+                              <input type="number" min="0" required value={charge.amount} onChange={(event) => updateCharge(fi, ri, ci, { amount: event.target.value })} />
+                            </label>
+                          </div>
+                        ))}
+                        <button type="button" className="secondary-button compact-button" onClick={() => updateRoom(fi, ri, { charges: [...room.charges, { name: '', amount: '', basis: 'monthly', mandatory: false, description: '' }] })}>＋ Add charge</button>
+                      </section>
+                    ))}
+                    <button type="button" className="secondary-button compact-button" onClick={() => addRoom(fi)}>＋ Add room to floor</button>
+                  </section>
+                ))}
+                <button type="button" className="secondary-button compact-button" onClick={addFloor}>＋ Add floor</button>
+                <p className="form-help">Removing floors, rooms, prices or charges is intentionally not supported here; omitted records remain in the database. Photos remain display-only.</p>
+              </section>
+            )}
             {actionError && <p className="form-error" role="alert">{actionError}</p>}
             <div className="modal-footer"><button className="secondary-button" type="button" disabled={actionBusy} onClick={()=>{setEditingProperty(null);setEditValues(null);setActionError('')}}>Cancel</button><button className="primary-button" type="submit" disabled={actionBusy}>{actionBusy ? 'Saving…' : 'Save changes'}</button></div>
           </form>

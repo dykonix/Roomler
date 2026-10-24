@@ -258,3 +258,63 @@ tbody tr:hover { background: #fdfdff; }
   .detail-grid .detail-full { grid-column: auto; }
   .action-modal { padding: 18px; }
 }
+
+/* Existing property photo previews in the admin edit modal */
+.edit-photo-section{margin:18px 0 22px;padding:16px;border:1px solid #e2e7f0;border-radius:14px;background:#fafbfe}
+.edit-photo-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+.edit-photo-heading strong{font-size:15px;color:#17213b}
+.edit-photo-heading span{font-size:12px;color:#68748c}
+.edit-photo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.edit-photo-card{min-width:0;margin:0;overflow:hidden;border:1px solid #e1e6ef;border-radius:11px;background:#fff}
+.edit-photo-card img,.edit-photo-unavailable{display:block;width:100%;height:120px;object-fit:cover;background:#f0f3f8}
+.edit-photo-unavailable{display:flex;align-items:center;justify-content:center;padding:10px;text-align:center;color:#69758c;font-size:12px}
+.edit-photo-card figcaption{display:flex;flex-direction:column;gap:5px;padding:10px}
+.edit-photo-card figcaption strong{font-size:12px;text-transform:capitalize;color:#28334d}
+.edit-photo-card figcaption small{font-size:11px;color:#7a8498;overflow-wrap:anywhere}
+.edit-photo-cover{align-self:flex-start;padding:3px 7px;border-radius:20px;background:#e9f0ff;color:#2455d6;font-size:10px;font-weight:700}
+.edit-photo-empty{font-size:13px;color:#69758c}
+@media(max-width:560px){.edit-photo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.edit-photo-card img,.edit-photo-unavailable{height:100px}}
+
+
+/* Admin inventory editor */
+.edit-inventory { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border, #e3e5e8); }
+.edit-inventory h3 { margin: 1.25rem 0 .5rem; }
+.edit-inventory h3:first-child { margin-top: 0; }
+.edit-floor, .edit-room { border: 1px solid var(--border, #e3e5e8); border-radius: 12px; padding: 1rem; margin: .85rem 0; }
+.edit-floor { background: var(--surface-subtle, #fafafa); }
+.edit-room { background: var(--surface, #fff); }
+.edit-floor h4, .edit-room h4 { margin: 0 0 .75rem; }
+.edit-inventory > .form-help { margin-bottom: 1rem; }
+.edit-inventory > strong, .edit-room > strong { display: block; margin: .8rem 0 .45rem; }
+.edit-inventory .compact-button { margin: .5rem .35rem .5rem 0; }
+
+/* Edit-property amenity controls: keep each label and value aligned in a responsive grid. */
+.edit-inventory .amenity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: .65rem;
+  margin: .75rem 0 1.25rem;
+}
+.edit-inventory .amenity-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+  padding: .65rem .75rem;
+  border: 1px solid var(--border, #e3e5e8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  font-size: .92rem;
+}
+.edit-inventory .amenity-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.edit-inventory .amenity-row select {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .edit-inventory .amenity-grid { grid-template-columns: 1fr; }
+}
