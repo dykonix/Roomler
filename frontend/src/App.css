@@ -287,3 +287,34 @@ tbody tr:hover { background: #fdfdff; }
 .edit-inventory > .form-help { margin-bottom: 1rem; }
 .edit-inventory > strong, .edit-room > strong { display: block; margin: .8rem 0 .45rem; }
 .edit-inventory .compact-button { margin: .5rem .35rem .5rem 0; }
+
+/* Edit-property amenity controls: keep each label and value aligned in a responsive grid. */
+.edit-inventory .amenity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: .65rem;
+  margin: .75rem 0 1.25rem;
+}
+.edit-inventory .amenity-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+  padding: .65rem .75rem;
+  border: 1px solid var(--border, #e3e5e8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  font-size: .92rem;
+}
+.edit-inventory .amenity-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.edit-inventory .amenity-row select {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .edit-inventory .amenity-grid { grid-template-columns: 1fr; }
+}
