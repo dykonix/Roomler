@@ -823,6 +823,7 @@ function App() {
         <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
           <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
           <div className="modal-notice">Edit property details, amenities, floors, rooms, monthly rent offers and room charges below. Existing records not represented in this form are preserved. Photo editing is not enabled here.</div>
+          <form onSubmit={savePropertyEdit}>
           <section className="edit-photo-section" aria-label="Existing property photos">
             <div className="edit-photo-heading"><strong>Property photos</strong><span>{editingProperty.images?.length ?? 0} saved photo(s)</span></div>
             {editingProperty.images?.length ? <div className="edit-photo-grid">{editingProperty.images.map((image, index) => {
