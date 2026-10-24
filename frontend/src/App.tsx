@@ -820,10 +820,32 @@ function App() {
       </div>}
 
       {editingProperty && editValues && <div className="modal-backdrop" role="presentation">
-        <section className="modal action-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
+        <section className="modal property-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
           <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
-          <div className="modal-notice">Edit property details, amenities, floors, rooms, monthly rent offers and room charges below. Existing records not represented in this form are preserved. Photo editing is not enabled here.</div>
+          <div className="modal-notice">Edit the saved property using the same section-based layout as Add Property. Unknown values remain unknown. Existing records not represented in editable fields are preserved; photos are currently display-only.</div>
           <form onSubmit={savePropertyEdit}>
+          <h3 className="form-section-title">1. Property details</h3>
+          <div className="form-row">
+            <label className="form-field">Property title *<input required minLength={3} maxLength={150} value={editValues.title} onChange={e => setEditValues({ ...editValues, title: e.target.value })} /></label>
+            <label className="form-field">Property type<select value={editValues.propertyType} onChange={e => setEditValues({ ...editValues, propertyType: e.target.value as 'PG' | 'Flat' })}><option value="PG">PG</option><option value="Flat">Flat</option></select></label>
+          </div>
+          <label className="form-field">Description<textarea rows={3} maxLength={10000} value={editValues.description} onChange={e => setEditValues({ ...editValues, description: e.target.value })} /></label>
+          <div className="form-row">
+            <label className="form-field">City *<select required value={editValues.cityId} onChange={e => setEditValues({ ...editValues, cityId: e.target.value, localityId: '' })}><option value="">Select city</option>{formOptions.cities.map(city => <option key={city.id} value={city.id}>{city.name}, {city.state_name}</option>)}</select></label>
+            <label className="form-field">Locality<select value={editValues.localityId} disabled={!editValues.cityId} onChange={e => setEditValues({ ...editValues, localityId: e.target.value })}><option value="">Unknown / not specified</option>{formOptions.localities.filter(l => l.city_id === editValues.cityId).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+          </div>
+          <label className="form-field">Owner *<select required value={editValues.ownerId} onChange={e => setEditValues({ ...editValues, ownerId: e.target.value })}><option value="">Select owner</option>{formOptions.owners.map(owner => <option key={owner.id} value={owner.id}>{owner.name} — {owner.data_label.replaceAll('_', ' ')}</option>)}</select></label>
+          <label className="form-field">Street address<input maxLength={500} value={editValues.address} onChange={e => setEditValues({ ...editValues, address: e.target.value })} /></label>
+          <label className="form-field">Google Maps URL<input type="url" value={editValues.googleMapsUrl} onChange={e => setEditValues({ ...editValues, googleMapsUrl: e.target.value })} /></label>
+          <h3 className="form-section-title">2. Eligibility and house rules</h3>
+          <div className="form-row">
+            <label className="form-field">Occupancy eligibility<select value={editValues.genderEligibility} onChange={e => setEditValues({ ...editValues, genderEligibility: e.target.value })}><option value="unknown">Unknown</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Unisex">Unisex</option></select></label>
+            <label className="form-field">Couples allowed?<select value={editValues.couplesAllowed} onChange={e => setEditValues({ ...editValues, couplesAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+          </div>
+          <div className="form-row">
+            <label className="form-field">Co-ed rooms allowed?<select value={editValues.coEdRoomsAllowed} onChange={e => setEditValues({ ...editValues, coEdRoomsAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+            <label className="form-field">Cooking allowed?<select value={editValues.cookingAllowed} onChange={e => setEditValues({ ...editValues, cookingAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+          </div>
           <section className="edit-photo-section" aria-label="Existing property photos">
             <div className="edit-photo-heading"><strong>Property photos</strong><span>{editingProperty.images?.length ?? 0} saved photo(s)</span></div>
             {editingProperty.images?.length ? <div className="edit-photo-grid">{editingProperty.images.map((image, index) => {
