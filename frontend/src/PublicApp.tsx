@@ -111,7 +111,7 @@ export default function PublicApp() {
    const path = location.pathname
    if(path==='/search') { void search(); return }
    if(path.startsWith('/property/')) {
-    const id = path.split('/').pop()
+    const id = propertyIdFromPath(path)
     if(!id) return
     setPage('detail'); setBusy(true); setError(''); setItem(null)
     fetch(API+'/properties/'+id+(demo?'?includeDemo=true':''))
