@@ -832,6 +832,7 @@ function App() {
                 <figcaption><strong>{image.image_label?.replaceAll('_', ' ') || 'Photo'}</strong>{image.is_cover && <span className="edit-photo-cover">Cover photo</span>}<small>{image.alt_text || 'No alt text provided'}</small></figcaption>
               </figure>;
             })}</div> : <p className="form-help">No photos are available for this property.</p>}
+          </section>
           {inventoryValues && (
               <section className="edit-inventory">
                 <h3>Property amenities</h3>
