@@ -318,3 +318,86 @@ tbody tr:hover { background: #fdfdff; }
 @media (max-width: 640px) {
   .edit-inventory .amenity-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Add-property amenity checklist layout fix */
+.amenity-checklist {
+  width: 100%;
+  min-width: 0;
+  color: var(--navy, #0f172a);
+  font-size: 12px;
+  text-align: left;
+}
+
+.amenity-checklist .subsection-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.amenity-checklist .form-help {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.amenity-checklist .amenity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+  width: 100%;
+  margin: 12px 0 20px;
+}
+
+.amenity-checklist .amenity-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e3e5ee);
+  border-radius: 9px;
+  background: #fff;
+  color: #354058;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.amenity-checklist .amenity-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.amenity-checklist .amenity-row select {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #e1e5ee;
+  border-radius: 7px;
+  background: #fff;
+  color: #354058;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .amenity-checklist .amenity-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.edit-photo-upload{margin:14px 0}
+.edit-photo-pending-title{margin:16px 0 10px;color:#28334d;font-size:14px}
+.edit-photo-upload-card{min-width:0;margin:0;overflow:hidden;border:1px solid #d8e2f4;border-radius:11px;background:#fff}
+.edit-photo-upload-card>img{display:block;width:100%;height:140px;object-fit:cover;background:#f0f3f8}
+.edit-photo-upload-card figcaption{display:flex;flex-direction:column;gap:10px;padding:10px}
+.edit-photo-upload-card figcaption>strong{font-size:12px;overflow-wrap:anywhere;color:#28334d}
+.edit-photo-upload-card .form-field{gap:5px;font-size:12px}
+.edit-photo-upload-card .form-field input,.edit-photo-upload-card .form-field select{width:100%;min-width:0;box-sizing:border-box}
+.edit-photo-cover-choice{display:flex;align-items:center;gap:7px;font-size:12px;color:#28334d}
+.edit-photo-cover-choice input{width:auto}

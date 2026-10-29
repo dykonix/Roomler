@@ -193,6 +193,11 @@ function App() {
   const [reviewMode, setReviewMode] = useState(false)
   const [uploadingPhotos, setUploadingPhotos] = useState(false)
 
+  const [editPendingPhotos, setEditPendingPhotos] = useState<PropertyFormValues['images']>([])
+  const [uploadingEditPhotos, setUploadingEditPhotos] = useState(false)
+  const [savingEditPhotos, setSavingEditPhotos] = useState(false)
+  const [editPhotoError, setEditPhotoError] = useState('')
+
   const filteredProperties = useMemo(() => properties.filter((property) => {
     const search = query.trim().toLowerCase()
     const matchesSearch = !search || [property.id, property.title, property.city, property.locality, property.owner]
@@ -209,7 +214,7 @@ function App() {
     setReviewMode(false)
     setFormLoading(true)
     try {
-      const response = await fetch('http://localhost:3001/api/admin/form-options')
+      const response = await fetch('/api/admin/form-options')
       if (!response.ok) throw new Error(`Could not load form options (${response.status}).`)
       const options = await response.json() as FormOptions
       setFormOptions(options)
@@ -243,7 +248,7 @@ function App() {
     try {
       const uploaded: PropertyFormValues['images'] = []
       for (const file of files) {
-        const presignResponse = await fetch('http://localhost:3001/api/admin/media/presign-upload', {
+        const presignResponse = await fetch('/api/admin/media/presign-upload', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contentType: file.type, fileSize: file.size }),
         })
@@ -261,6 +266,116 @@ function App() {
       setFormError(error instanceof Error ? error.message : 'Photo upload failed.')
     } finally {
       setUploadingPhotos(false)
+    }
+  }
+
+
+  async function handleEditPhotoSelection(fileList: FileList | null) {
+    if (!fileList?.length || !editingProperty) return
+    const files = Array.from(fileList)
+    const savedCount = editingProperty.images?.length ?? 0
+
+    if (savedCount + editPendingPhotos.length + files.length > 30) {
+      setEditPhotoError('A property can have at most 30 photos in total.')
+      return
+    }
+
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/avif']
+    for (const file of files) {
+      if (!allowed.includes(file.type)) {
+        setEditPhotoError(`${file.name}: use JPG, PNG, WebP or AVIF.`)
+        return
+      }
+      if (file.size <= 0 || file.size > 10 * 1024 * 1024) {
+        setEditPhotoError(`${file.name}: each photo must be greater than 0 bytes and no larger than 10 MB.`)
+        return
+      }
+    }
+
+    setEditPhotoError('')
+    setUploadingEditPhotos(true)
+    try {
+      const uploaded: PropertyFormValues['images'] = []
+      for (const file of files) {
+        const presignResponse = await fetch('/api/admin/media/presign-upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contentType: file.type, fileSize: file.size }),
+        })
+        const presign = await presignResponse.json()
+        if (!presignResponse.ok) {
+          throw new Error(presign.error ?? `Could not prepare upload for ${file.name}.`)
+        }
+
+        const uploadForm = new FormData()
+        Object.entries(presign.fields as Record<string, string>).forEach(
+          ([key, value]) => uploadForm.append(key, value),
+        )
+        uploadForm.append('file', file)
+        const uploadResponse = await fetch(presign.url as string, {
+          method: 'POST',
+          body: uploadForm,
+        })
+        if (!uploadResponse.ok) {
+          throw new Error(`S3 upload failed for ${file.name} (${uploadResponse.status}).`)
+        }
+
+        uploaded.push({
+          key: presign.key as string,
+          url: `s3://${presign.key as string}`,
+          previewUrl: URL.createObjectURL(file),
+          fileName: file.name,
+          label: 'other',
+          altText: file.name.replace(/\.[^.]+$/, ''),
+          isCover: false,
+        })
+      }
+
+      setEditPendingPhotos(prev => {
+        const combined = [...prev, ...uploaded]
+        const existingCover = editingProperty.images?.some(image => image.is_cover) ?? false
+        const alreadySelected = combined.some(image => image.isCover)
+        if (existingCover || alreadySelected || combined.length === 0) return combined
+        return combined.map((image, index) => ({ ...image, isCover: index === 0 }))
+      })
+    } catch (error) {
+      setEditPhotoError(error instanceof Error ? error.message : 'Photo upload failed.')
+    } finally {
+      setUploadingEditPhotos(false)
+    }
+  }
+
+  async function saveEditPhotos() {
+    if (!editingProperty || editPendingPhotos.length === 0) return
+
+    setSavingEditPhotos(true)
+    setEditPhotoError('')
+    try {
+      const response = await fetch(`/api/admin/properties/${editingProperty.id}/media`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          images: editPendingPhotos.map(image => ({
+            key: image.key,
+            label: image.label,
+            altText: image.altText.trim(),
+            isCover: image.isCover,
+          })),
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.error ?? `Could not save photos (${response.status}).`)
+      }
+
+      const refreshed = await loadPropertyDetail(editingProperty.id)
+      setEditingProperty(refreshed)
+      setEditPendingPhotos([])
+      showDemoToast('New property photos saved. Existing photos were preserved.')
+    } catch (error) {
+      setEditPhotoError(error instanceof Error ? error.message : 'Unable to save property photos.')
+    } finally {
+      setSavingEditPhotos(false)
     }
   }
 
@@ -369,13 +484,13 @@ function App() {
 
     setSavingProperty(true)
     try {
-      const response = await fetch('http://localhost:3001/api/admin/properties', {
+      const response = await fetch('/api/admin/properties', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error ?? `Save failed (${response.status}).`)
       setShowAddForm(false); setFormValues(initialFormValues); setReviewMode(false)
-      const listResponse = await fetch('http://localhost:3001/api/admin/properties')
+      const listResponse = await fetch('/api/admin/properties')
       if (listResponse.ok) {
         const listResult: { data: ApiProperty[]; count: number } = await listResponse.json()
         setProperties(listResult.data.map(mapApiProperty)); showDemoToast('Draft property saved. It is marked synthetic and unverified.')
@@ -391,7 +506,7 @@ function App() {
       setLoading(true)
       setLoadError('')
       try {
-        const response = await fetch('http://localhost:3001/api/admin/properties')
+        const response = await fetch('/api/admin/properties')
         if (!response.ok) throw new Error(`API request failed (${response.status})`)
         const result: { data: ApiProperty[]; count: number } = await response.json()
         if (!Array.isArray(result.data)) throw new Error('The API returned an unexpected response.')
@@ -408,7 +523,7 @@ function App() {
 
 
   async function loadPropertyDetail(id: string): Promise<PropertyDetail> {
-    const response = await fetch(`http://localhost:3001/api/admin/properties/${id}`)
+    const response = await fetch(`/api/admin/properties/${id}`)
     const result = await response.json()
     if (!response.ok) throw new Error(result.error ?? `Could not load property (${response.status}).`)
     return result.data as PropertyDetail
@@ -424,12 +539,14 @@ function App() {
   async function openPropertyEdit(property: Property) {
     setOpenActionId(null); setActionError(''); setActionBusy(true)
     try {
-      const optionsResponse = await fetch('http://localhost:3001/api/admin/form-options')
+      const optionsResponse = await fetch('/api/admin/form-options')
       const options = await optionsResponse.json() as FormOptions
       if (!optionsResponse.ok) throw new Error('Could not load cities, localities and owners for editing.')
       setFormOptions(options)
       const detail = await loadPropertyDetail(property.id)
       setEditingProperty(detail)
+      setEditPendingPhotos([])
+      setEditPhotoError('')
       setInventoryValues({
         propertyAmenities: (detail.property_amenities ?? []).map(a => ({ key: a.key, value: a.value })),
         floors: (detail.floors ?? []).map(f => ({
@@ -461,7 +578,7 @@ function App() {
   }
 
   async function refreshProperties() {
-    const response = await fetch('http://localhost:3001/api/admin/properties')
+    const response = await fetch('/api/admin/properties')
     const result = await response.json()
     if (!response.ok || !Array.isArray(result.data)) throw new Error(result.error ?? 'Unable to refresh properties.')
     setProperties(result.data.map(mapApiProperty))
@@ -470,7 +587,7 @@ function App() {
   async function changePropertyStatus(property: Property, status: 'draft' | 'published' | 'paused' | 'removed') {
     setOpenActionId(null); setActionBusy(true); setActionError('')
     try {
-      const response = await fetch(`http://localhost:3001/api/admin/properties/${property.id}/status`, {
+      const response = await fetch(`/api/admin/properties/${property.id}/status`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
       })
       const result = await response.json()
@@ -487,7 +604,7 @@ function App() {
     setActionBusy(true); setActionError('')
     const toNullableBoolean = (value: string) => value === 'unknown' ? null : value === 'yes'
     try {
-      const response = await fetch(`http://localhost:3001/api/admin/properties/${editingProperty.id}`, {
+      const response = await fetch(`/api/admin/properties/${editingProperty.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: editValues.title.trim(), description: editValues.description, propertyType: editValues.propertyType,
@@ -501,7 +618,7 @@ function App() {
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error ?? `Save failed (${response.status}).`)
-      const inventoryResponse = await fetch(`http://localhost:3001/api/admin/properties/${editingProperty.id}/inventory`, {
+      const inventoryResponse = await fetch(`/api/admin/properties/${editingProperty.id}/inventory`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyAmenities: inventoryValues.propertyAmenities,
@@ -531,7 +648,7 @@ function App() {
     if (!deleteTarget) return
     setActionBusy(true); setActionError('')
     try {
-      const response = await fetch(`http://localhost:3001/api/admin/properties/${deleteTarget.id}`, { method: 'DELETE' })
+      const response = await fetch(`/api/admin/properties/${deleteTarget.id}`, { method: 'DELETE' })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error ?? `Delete failed (${response.status}).`)
       const title = deleteTarget.title
@@ -821,8 +938,8 @@ function App() {
 
       {editingProperty && editValues && <div className="modal-backdrop" role="presentation">
         <section className="modal property-modal" role="dialog" aria-modal="true" aria-labelledby="edit-property-title">
-          <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy} onClick={() => { setEditingProperty(null); setEditValues(null); setActionError('') }} aria-label="Close edit">×</button></div>
-          <div className="modal-notice">Edit the saved property using the same section-based layout as Add Property. Unknown values remain unknown. Existing records not represented in editable fields are preserved; photos are currently display-only.</div>
+          <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · EDIT</div><h2 id="edit-property-title">Edit property details</h2></div><button className="modal-close" type="button" disabled={actionBusy || uploadingEditPhotos || savingEditPhotos} onClick={() => { setEditingProperty(null); setEditValues(null); setEditPendingPhotos([]); setEditPhotoError(''); setActionError('') }} aria-label="Close edit">×</button></div>
+          <div className="modal-notice">Edit the saved property using the same section-based layout as Add Property. Unknown values remain unknown. Existing records not represented in editable fields are preserved; Existing photos are preserved; new photos can be uploaded and saved separately.</div>
           <form onSubmit={savePropertyEdit}>
           <h3 className="form-section-title">1. Property details</h3>
           <div className="form-row">
@@ -846,15 +963,136 @@ function App() {
             <label className="form-field">Co-ed rooms allowed?<select value={editValues.coEdRoomsAllowed} onChange={e => setEditValues({ ...editValues, coEdRoomsAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
             <label className="form-field">Cooking allowed?<select value={editValues.cookingAllowed} onChange={e => setEditValues({ ...editValues, cookingAllowed: e.target.value })}><option value="unknown">Unknown</option><option value="yes">Yes</option><option value="no">No</option></select></label>
           </div>
-          <section className="edit-photo-section" aria-label="Existing property photos">
-            <div className="edit-photo-heading"><strong>Property photos</strong><span>{editingProperty.images?.length ?? 0} saved photo(s)</span></div>
-            {editingProperty.images?.length ? <div className="edit-photo-grid">{editingProperty.images.map((image, index) => {
-              const usableUrl = image.image_url && !image.image_url.startsWith('s3://');
-              return <figure className="edit-photo-card" key={image.id}>
-                {usableUrl ? <img src={image.image_url} alt={image.alt_text || image.image_label || `Property photo ${index + 1}`} /> : <div className="edit-photo-unavailable">Image preview unavailable</div>}
-                <figcaption><strong>{image.image_label?.replaceAll('_', ' ') || 'Photo'}</strong>{image.is_cover && <span className="edit-photo-cover">Cover photo</span>}<small>{image.alt_text || 'No alt text provided'}</small></figcaption>
-              </figure>;
-            })}</div> : <p className="form-help">No photos are available for this property.</p>}
+          <section className="edit-photo-section" aria-label="Property photos">
+            <div className="edit-photo-heading">
+              <strong>Property photos</strong>
+              <span>{(editingProperty.images?.length ?? 0) + editPendingPhotos.length} photo(s)</span>
+            </div>
+
+            {editingProperty.images?.length ? (
+              <div className="edit-photo-grid">
+                {editingProperty.images.map((image, index) => {
+                  const usableUrl = image.image_url && !image.image_url.startsWith('s3://')
+                  return (
+                    <figure className="edit-photo-card" key={image.id}>
+                      {usableUrl
+                        ? <img src={image.image_url} alt={image.alt_text || image.image_label || `Property photo ${index + 1}`} />
+                        : <div className="edit-photo-unavailable">Image preview unavailable</div>}
+                      <figcaption>
+                        <strong>{image.image_label?.replaceAll('_', ' ') || 'Photo'}</strong>
+                        {image.is_cover && <span className="edit-photo-cover">Current cover</span>}
+                        <small>{image.alt_text || 'No alt text provided'}</small>
+                      </figcaption>
+                    </figure>
+                  )
+                })}
+              </div>
+            ) : <p className="form-help">No photos have been saved for this property yet.</p>}
+
+            <label className="upload-dropzone edit-photo-upload">
+              <span className="upload-icon">↑</span>
+              <strong>{uploadingEditPhotos ? 'Uploading photos…' : 'Add photos from your device'}</strong>
+              <span>JPG, PNG, WebP or AVIF · 10 MB maximum each · 30 photos maximum in total</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/avif"
+                multiple
+                disabled={uploadingEditPhotos || savingEditPhotos ||
+                  (editingProperty.images?.length ?? 0) + editPendingPhotos.length >= 30}
+                onChange={event => {
+                  void handleEditPhotoSelection(event.currentTarget.files)
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+
+            {editPendingPhotos.length > 0 && (
+              <>
+                <h4 className="edit-photo-pending-title">New photos — not saved yet</h4>
+                <div className="edit-photo-grid">
+                  {editPendingPhotos.map((image, index) => (
+                    <figure className="edit-photo-upload-card" key={image.key}>
+                      <img src={image.previewUrl} alt={image.altText || image.fileName} />
+                      <figcaption>
+                        <strong>{image.fileName}</strong>
+                        <label className="form-field">
+                          Photo category
+                          <select
+                            value={image.label}
+                            disabled={savingEditPhotos}
+                            onChange={event => setEditPendingPhotos(prev => prev.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, label: event.target.value as PropertyFormValues['images'][number]['label'] }
+                                : item
+                            ))}
+                          >
+                            <option value="exterior">Exterior</option>
+                            <option value="bedroom">Bedroom</option>
+                            <option value="kitchen">Kitchen</option>
+                            <option value="bathroom">Bathroom</option>
+                            <option value="living_area">Living area</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </label>
+                        <label className="form-field">
+                          Alt text
+                          <input
+                            maxLength={500}
+                            value={image.altText}
+                            disabled={savingEditPhotos}
+                            onChange={event => setEditPendingPhotos(prev => prev.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, altText: event.target.value } : item
+                            ))}
+                          />
+                        </label>
+                        <label className="edit-photo-cover-choice">
+                          <input
+                            type="checkbox"
+                            checked={image.isCover}
+                            disabled={savingEditPhotos}
+                            onChange={event => setEditPendingPhotos(prev => prev.map((item, itemIndex) => ({
+                              ...item,
+                              isCover: event.target.checked && itemIndex === index,
+                            })))}
+                          />
+                          Set as cover photo
+                        </label>
+                        <button
+                          className="secondary-button compact-button"
+                          type="button"
+                          disabled={savingEditPhotos || uploadingEditPhotos}
+                          onClick={() => {
+                            URL.revokeObjectURL(image.previewUrl)
+                            setEditPendingPhotos(prev => {
+                              const remaining = prev.filter((_, itemIndex) => itemIndex !== index)
+                              const hasSavedCover = editingProperty.images?.some(saved => saved.is_cover) ?? false
+                              if (!hasSavedCover && !remaining.some(item => item.isCover) && remaining.length > 0) {
+                                return remaining.map((item, itemIndex) => ({ ...item, isCover: itemIndex === 0 }))
+                              }
+                              return remaining
+                            })
+                          }}
+                        >
+                          Remove from pending
+                        </button>
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={savingEditPhotos || uploadingEditPhotos}
+                  onClick={() => void saveEditPhotos()}
+                >
+                  {savingEditPhotos ? 'Saving photos…' : `Save ${editPendingPhotos.length} new photo(s)`}
+                </button>
+              </>
+            )}
+            {editPhotoError && <p className="form-error" role="alert">{editPhotoError}</p>}
+            <p className="form-help">
+              Existing photos are preserved. You can add photos here, but deleting saved photos and changing an existing photo’s cover status are not supported yet. Selecting a new cover replaces the current cover when the new photos are saved.
+            </p>
           </section>
           {inventoryValues && (
               <section className="edit-inventory">
@@ -991,7 +1229,7 @@ function App() {
                   </section>
                 ))}
                 <button type="button" className="secondary-button compact-button" onClick={addFloor}>＋ Add floor</button>
-                <p className="form-help">Removing floors, rooms, prices or charges is intentionally not supported here; omitted records remain in the database. Photos remain display-only.</p>
+                <p className="form-help">Removing floors, rooms, prices or charges is intentionally not supported here; omitted records remain in the database. Existing photos cannot be deleted or edited here; use the separate photo controls above to add new photos.</p>
               </section>
             )}
             {actionError && <p className="form-error" role="alert">{actionError}</p>}

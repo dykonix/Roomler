@@ -4,7 +4,7 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import cors from 'cors';
 import express from 'express';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -219,8 +219,15 @@ app.get('/api/admin/form-options', async (_req, res) => {
  * Authentication/authorization must be implemented before production use.
  */
 app.post('/api/admin/properties', async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    res.status(503).json({ error: 'Property creation is not enabled in production.' });
+  const stagingPropertyCreationEnabled =
+    process.env.ROOMLER_ENV === 'staging' &&
+    process.env.ROOMLER_ALLOW_PROPERTY_CREATION === 'true';
+
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !stagingPropertyCreationEnabled
+  ) {
+    res.status(503).json({ error: 'Property creation is not enabled in this environment.' });
     return;
   }
 
@@ -507,7 +514,11 @@ app.get('/api/public/locations', async (_req, res) => {
  * are available only in development with ?includeDemo=true and remain labelled.
  */
 app.get('/api/public/properties', async (req, res) => {
-  const includeDemo = process.env.NODE_ENV !== 'production' && req.query.includeDemo === 'true';
+  const allowSyntheticDemo =
+      process.env.NODE_ENV !== 'production' ||
+      (process.env.ROOMLER_ENV === 'staging' &&
+       process.env.ALLOW_SYNTHETIC_DEMO === 'true');
+    const includeDemo = allowSyntheticDemo && req.query.includeDemo === 'true';
   const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
   const locality = typeof req.query.locality === 'string' ? req.query.locality.trim() : '';
   const propertyType = typeof req.query.type === 'string' ? req.query.type.trim() : '';
@@ -555,7 +566,7 @@ app.get('/api/public/properties', async (req, res) => {
       ) image_data ON TRUE
       WHERE (
         (p.listing_status = 'published' AND p.data_label = 'real_submitted')
-        OR ($1::boolean AND p.data_label = 'synthetic_demo')
+        OR ($1::boolean AND p.listing_status = 'published' AND p.data_label = 'synthetic_demo')
       )
       AND ($2 = '' OR lower(c.canonical_name) = lower($2))
       AND ($3 = '' OR lower(COALESCE(l.canonical_name,'')) LIKE '%' || lower($3) || '%')
@@ -587,7 +598,11 @@ app.get('/api/public/properties/:id', async (req, res) => {
     return;
   }
   try {
-    const includeDemo = process.env.NODE_ENV !== 'production' && req.query.includeDemo === 'true';
+    const allowSyntheticDemo =
+      process.env.NODE_ENV !== 'production' ||
+      (process.env.ROOMLER_ENV === 'staging' &&
+       process.env.ALLOW_SYNTHETIC_DEMO === 'true');
+    const includeDemo = allowSyntheticDemo && req.query.includeDemo === 'true';
     const result = await pool.query(`
       SELECT p.id, p.title, p.description, p.property_type, p.address, p.google_maps_url,
         p.gender_eligibility, p.couples_allowed, p.co_ed_rooms_allowed, p.cooking_allowed,
@@ -620,7 +635,7 @@ app.get('/api/public/properties/:id', async (req, res) => {
       ) image_data ON TRUE
       WHERE p.id=$1::uuid AND (
         (p.listing_status='published' AND p.data_label='real_submitted')
-        OR ($2::boolean AND p.data_label='synthetic_demo')
+        OR ($2::boolean AND p.listing_status='published' AND p.data_label='synthetic_demo')
       )
     `, [req.params.id, includeDemo]);
     if (!result.rows.length) { res.status(404).json({ error: 'Property not found.' }); return; }
@@ -1139,7 +1154,19 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
 
 // Listing status is a separate capability from editing and verification.
 app.patch('/api/admin/properties/:id/status', async (req, res) => {
-  if (!developmentOnlyPropertyAction(res)) return;
+  const stagingStatusChangesEnabled =
+    process.env.ROOMLER_ENV === 'staging' &&
+    process.env.ROOMLER_ALLOW_STATUS_CHANGES === 'true';
+
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !stagingStatusChangesEnabled
+  ) {
+    res.status(503).json({
+      error: 'Listing status changes are disabled in this environment.',
+    });
+    return;
+  }
   if (!uuidPattern.test(req.params.id)) {
     res.status(400).json({ error: 'A valid property ID is required.' });
     return;
@@ -1193,13 +1220,182 @@ app.delete('/api/admin/properties/:id', async (req, res) => {
   }
 });
 
+
+// Attach already-uploaded S3 photos to an existing property.
+// This endpoint is staging-only and does not enable general property editing.
+app.post('/api/admin/properties/:id/media', async (req, res) => {
+  if (
+    process.env.ROOMLER_ENV !== 'staging' ||
+    process.env.ROOMLER_ALLOW_MEDIA_UPLOADS !== 'true'
+  ) {
+    res.status(503).json({ error: 'Property media editing is not enabled for this environment.' });
+    return;
+  }
+
+  const propertyId = req.params.id;
+  if (!uuidPattern.test(propertyId)) {
+    res.status(400).json({ error: 'A valid property ID is required.' });
+    return;
+  }
+
+  const body = req.body as { images?: unknown };
+  const images = body.images;
+  const allowedLabels = ['exterior', 'bedroom', 'kitchen', 'bathroom', 'living_area', 'other'];
+
+  if (!Array.isArray(images) || images.length < 1 || images.length > 30) {
+    res.status(400).json({ error: 'Provide between 1 and 30 photos.' });
+    return;
+  }
+
+  if (images.some((image: any) =>
+    !image ||
+    typeof image.key !== 'string' ||
+    !image.key.startsWith('pending/') ||
+    image.key.length > 300 ||
+    typeof image.label !== 'string' ||
+    !allowedLabels.includes(image.label) ||
+    typeof image.altText !== 'string' ||
+    image.altText.length > 500 ||
+    typeof image.isCover !== 'boolean'
+  )) {
+    res.status(400).json({ error: 'One or more photo details are invalid.' });
+    return;
+  }
+
+  if (new Set(images.map((image: any) => image.key)).size !== images.length) {
+    res.status(400).json({ error: 'The same uploaded photo cannot be added more than once.' });
+    return;
+  }
+
+  if (images.filter((image: any) => image.isCover).length > 1) {
+    res.status(400).json({ error: 'Select at most one new cover photo.' });
+    return;
+  }
+
+  if (!bucketName) {
+    res.status(500).json({ error: 'S3 bucket is not configured.' });
+    return;
+  }
+
+  // Verify all uploaded objects before changing the database.
+  try {
+    await Promise.all(images.map((image: { key: string }) =>
+      s3.send(new HeadObjectCommand({
+        Bucket: bucketName,
+        Key: image.key,
+      })),
+    ));
+  } catch (error) {
+    console.error('Uploaded photo is missing or inaccessible in S3:', error);
+    res.status(400).json({
+      error: 'One or more uploaded photos could not be verified in S3. Please upload them again.',
+    });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const property = await client.query(
+      'SELECT id FROM properties WHERE id = $1::uuid FOR UPDATE',
+      [propertyId],
+    );
+
+    if (!property.rowCount) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Property not found.' });
+      return;
+    }
+
+    const existing = await client.query(
+      `SELECT COUNT(*)::int AS photo_count,
+              COALESCE(BOOL_OR(is_cover), FALSE) AS has_cover,
+              COALESCE(MAX(display_order), -1) AS max_order
+       FROM property_images
+       WHERE property_id = $1::uuid`,
+      [propertyId],
+    );
+
+    const existingCount = Number(existing.rows[0].photo_count);
+    if (existingCount + images.length > 30) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ error: 'A property can have at most 30 photos in total.' });
+      return;
+    }
+
+    const hasExistingCover = existing.rows[0].has_cover === true;
+    const selectedCover = images.some((image: any) => image.isCover);
+    const defaultFirstCover = !hasExistingCover && !selectedCover;
+    const maxOrder = Number(existing.rows[0].max_order);
+
+    if (selectedCover) {
+      await client.query(
+        'UPDATE property_images SET is_cover = FALSE WHERE property_id = $1::uuid AND is_cover = TRUE',
+        [propertyId],
+      );
+    }
+
+    for (let index = 0; index < images.length; index++) {
+      const image = images[index] as {
+        key: string;
+        label: string;
+        altText: string;
+        isCover: boolean;
+      };
+      const isCover = image.isCover || (defaultFirstCover && index === 0);
+
+      await client.query(
+        `INSERT INTO property_images
+          (property_id, storage_key, image_url, image_label, alt_text,
+           display_order, is_cover, verification_status, data_label)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', 'synthetic_demo')`,
+        [
+          propertyId,
+          image.key,
+          `s3://${image.key}`,
+          image.label,
+          image.altText.trim() || null,
+          maxOrder + index + 1,
+          isCover,
+        ],
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const saved = await pool.query(
+      `SELECT id, image_url, storage_key, image_label, alt_text,
+              display_order, is_cover, verification_status, data_label
+       FROM property_images
+       WHERE property_id = $1::uuid
+       ORDER BY display_order, id`,
+      [propertyId],
+    );
+
+    res.json({
+      message: 'Property photos saved.',
+      data: await resolvePublicImageUrls(saved.rows),
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.error('Failed to save property photos:', error);
+    res.status(500).json({ error: 'Unable to save property photos.' });
+  } finally {
+    client.release();
+  }
+});
+
 // Prepare a short-lived, direct-to-S3 upload
 app.post('/api/admin/media/presign-upload', async (req, res) => {
-  // Temporary development-only restriction.
+  // Allow media uploads only when explicitly enabled for staging.
   // This does not replace authentication or authorization.
-  if (process.env.NODE_ENV === 'production') {
+  if (
+    process.env.ROOMLER_ENV !== 'staging' ||
+    process.env.ROOMLER_ALLOW_MEDIA_UPLOADS !== 'true'
+  ) {
     res.status(503).json({
-      error: 'Media uploads are not enabled in production.',
+      error: 'Media uploads are not enabled for this environment.',
     });
     return;
   }

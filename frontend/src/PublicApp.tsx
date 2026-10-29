@@ -15,9 +15,9 @@ type Listing = {
   security_deposit_refund_policy: string | null; notice_period_value: number | string | null; notice_period_unit: string | null
   electricity_billing_mode: string | null; electricity_rate_per_unit: number | string | null
 }
-const API = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/+$/, '') + '/api/public'
+const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '') + '/api/public'
 const initialParams = new URLSearchParams(location.search)
-const demo = import.meta.env.DEV || initialParams.get('demo') === 'true' || initialParams.get('includeDemo') === 'true'
+const demo = import.meta.env.DEV || import.meta.env.VITE_ROOMLER_DEMO_MODE === 'true' || initialParams.get('demo') === 'true' || initialParams.get('includeDemo') === 'true'
 const money = (v: number | string | null | undefined, currency = 'INR') => v == null || v === '' ? 'Price not provided' : new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Number(v))
 const yesNo = (v: boolean | null | undefined) => v === true ? 'Yes' : v === false ? 'No' : 'Not confirmed'
 const slugify = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

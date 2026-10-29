@@ -20,7 +20,7 @@ type Listing = {
   images: { id: string; image_url: string; alt_text?: string }[]
 }
 
-const API = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api/public'
+const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') + '/api/public'
 const slugify = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const money = (value: number | string | null, currency = 'INR') => value == null || value === ''
   ? 'Monthly price not provided'
@@ -75,6 +75,7 @@ export default function SeoLandingPage() {
     if (!matchingCity) { setBusy(false); setError('This city page is not configured yet.'); return }
     let cancelled = false
     const params = new URLSearchParams({ city: matchingCity.name, type: 'PG' })
+    if (import.meta.env.VITE_ROOMLER_DEMO_MODE === 'true') params.set('includeDemo', 'true')
     if (route.gender) params.set('gender', route.gender)
     if (route.localitySlug) params.set('locality', route.localitySlug.replace(/-/g, ' '))
     setBusy(true)
