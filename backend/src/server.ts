@@ -250,6 +250,7 @@ app.post('/api/admin/properties', async (req, res) => {
   if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 150) return fail('Title must contain 3 to 150 characters.');
   if (propertyType !== 'PG' && propertyType !== 'Flat') return fail('Property type must be PG or Flat.');
   if (typeof cityId !== 'string') return fail('A city is required.');
+  if (ownerId != null && typeof ownerId !== 'string') return fail('Owner ID must be valid when supplied.');
   if (ownerId == null && (typeof ownerName !== 'string' || ownerName.trim().length < 2 || ownerName.trim().length > 150)) return fail('Enter the real owner/contact name.');
   if (ownerId == null && ((typeof ownerPhone !== 'string' || !ownerPhone.trim()) && (typeof ownerEmail !== 'string' || !ownerEmail.trim()))) return fail('Provide a phone number or email for the owner/contact.');
   if (ownerPhone != null && (typeof ownerPhone !== 'string' || ownerPhone.length > 40)) return fail('Owner phone must be text of at most 40 characters.');
@@ -379,7 +380,7 @@ app.post('/api/admin/properties', async (req, res) => {
       const createdOwner = await client.query(`
         INSERT INTO owners (display_name, contact_phone, contact_email, owner_status, data_label)
         VALUES ($1,$2,$3,'active','real_submitted') RETURNING id
-      `, [ownerName.trim(), typeof ownerPhone === 'string' && ownerPhone.trim() ? ownerPhone.trim() : null,
+      `, [typeof ownerName === 'string' ? ownerName.trim() : '', typeof ownerPhone === 'string' && ownerPhone.trim() ? ownerPhone.trim() : null,
           typeof ownerEmail === 'string' && ownerEmail.trim() ? ownerEmail.trim() : null]);
       resolvedOwnerId = createdOwner.rows[0].id;
     }
@@ -531,10 +532,8 @@ app.get('/api/public/locations', async (_req, res) => {
  * are available only in development with ?includeDemo=true and remain labelled.
  */
 app.get('/api/public/properties', async (req, res) => {
-  const allowSyntheticDemo =
-      process.env.NODE_ENV !== 'production' ||
-      (process.env.ROOMLER_ENV === 'staging' &&
-       process.env.ALLOW_SYNTHETIC_DEMO === 'true');
+  // Staging should exercise real-submitted listings only. Synthetic seed records remain available in development.
+  const allowSyntheticDemo = process.env.NODE_ENV !== 'production';
     const includeDemo = allowSyntheticDemo && req.query.includeDemo === 'true';
   const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
   const locality = typeof req.query.locality === 'string' ? req.query.locality.trim() : '';
@@ -615,10 +614,8 @@ app.get('/api/public/properties/:id', async (req, res) => {
     return;
   }
   try {
-    const allowSyntheticDemo =
-      process.env.NODE_ENV !== 'production' ||
-      (process.env.ROOMLER_ENV === 'staging' &&
-       process.env.ALLOW_SYNTHETIC_DEMO === 'true');
+    // Staging should exercise real-submitted listings only. Synthetic seed records remain available in development.
+  const allowSyntheticDemo = process.env.NODE_ENV !== 'production';
     const includeDemo = allowSyntheticDemo && req.query.includeDemo === 'true';
     const result = await pool.query(`
       SELECT p.id, p.title, p.description, p.property_type, p.address, p.google_maps_url,
