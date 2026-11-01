@@ -254,7 +254,7 @@ app.post('/api/admin/properties', async (req, res) => {
   if (ownerId == null && (typeof ownerName !== 'string' || ownerName.trim().length < 2 || ownerName.trim().length > 150)) return fail('Enter the real owner/contact name.');
   if (ownerId == null && ((typeof ownerPhone !== 'string' || !ownerPhone.trim()) && (typeof ownerEmail !== 'string' || !ownerEmail.trim()))) return fail('Provide a phone number or email for the owner/contact.');
   if (ownerPhone != null && (typeof ownerPhone !== 'string' || ownerPhone.length > 40)) return fail('Owner phone must be text of at most 40 characters.');
-  if (ownerEmail != null && (typeof ownerEmail !== 'string' || ownerEmail.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(ownerEmail))) return fail('Enter a valid owner email address.');
+  if (ownerEmail != null && (typeof ownerEmail !== 'string' || ownerEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail))) return fail('Enter a valid owner email address.');
   if (localityId != null && typeof localityId !== 'string') return fail('Locality must be a valid ID or left unspecified.');
   if (typeof description !== 'string' || description.length > 10000) return fail('Description must be text with at most 10,000 characters.');
   if (genderEligibility != null && !['Boys', 'Girls', 'Unisex'].includes(String(genderEligibility))) return fail('Choose a supported occupancy eligibility value or leave it unknown.');
@@ -1114,7 +1114,7 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
           [floorId,propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
         if (!updated.rowCount) throw new Error('A floor does not belong to this property. Reload the form and try again.');
       } else {
-        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,'synthetic_demo') RETURNING id`,
+        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,'real_submitted') RETURNING id`,
           [propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
         floorId=inserted.rows[0].id;
       }
@@ -1127,7 +1127,7 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
             [roomId,floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null,propertyId]);
           if (!updated.rowCount) throw new Error('A room does not belong to this property. Reload the form and try again.');
         } else {
-          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,'synthetic_demo') RETURNING id`,
+          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,'real_submitted') RETURNING id`,
             [floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null]);
           roomId=inserted.rows[0].id;
         }
@@ -1363,7 +1363,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
         `INSERT INTO property_images
           (property_id, storage_key, image_url, image_label, alt_text,
            display_order, is_cover, verification_status, data_label)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', 'synthetic_demo')`,
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', 'real_submitted')`,
         [
           propertyId,
           image.key,
