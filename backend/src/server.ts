@@ -1087,8 +1087,9 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const exists = await client.query('SELECT id FROM properties WHERE id=$1::uuid FOR UPDATE', [propertyId]);
+    const exists = await client.query('SELECT id, data_label FROM properties WHERE id=$1::uuid FOR UPDATE', [propertyId]);
     if (!exists.rowCount) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Property not found.' }); return; }
+    const propertyDataLabel = exists.rows[0].data_label === 'real_submitted' ? 'real_submitted' : 'synthetic_demo';
 
     const saveAmenities = async (table: 'property_attribute_values'|'floor_attribute_values'|'room_attribute_values',
       idColumn: 'property_id'|'floor_id'|'room_id', entityId: string, items: any[]) => {
@@ -1114,8 +1115,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
           [floorId,propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
         if (!updated.rowCount) throw new Error('A floor does not belong to this property. Reload the form and try again.');
       } else {
-        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,'real_submitted') RETURNING id`,
-          [propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
+        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5) RETURNING id`,
+          [propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null,propertyDataLabel]);
         floorId=inserted.rows[0].id;
       }
       savedFloors++;
@@ -1127,8 +1128,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
             [roomId,floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null,propertyId]);
           if (!updated.rowCount) throw new Error('A room does not belong to this property. Reload the form and try again.');
         } else {
-          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,'real_submitted') RETURNING id`,
-            [floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null]);
+          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+            [floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null,propertyDataLabel]);
           roomId=inserted.rows[0].id;
         }
         savedRooms++;
@@ -1141,8 +1142,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
               [offer.id,roomId,Number(offer.amount),offer.rentBasis ?? expected,offer.foodOption,offer.status]);
             if (!updated.rowCount) throw new Error('A rent offer does not belong to this room. Reload and try again.');
           } else {
-            await client.query(`INSERT INTO room_prices (room_id,rent_basis,stay_period,amount,currency,valid_from,is_current,data_label,food_option,offer_status) VALUES ($1::uuid,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,'real_submitted',$4,$5)`,
-              [roomId,offer.rentBasis ?? expected,Number(offer.amount),offer.foodOption,offer.status]);
+            await client.query(`INSERT INTO room_prices (room_id,rent_basis,stay_period,amount,currency,valid_from,is_current,data_label,food_option,offer_status) VALUES ($1::uuid,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,$6,$4,$5)`,
+              [roomId,offer.rentBasis ?? expected,Number(offer.amount),offer.foodOption,offer.status,propertyDataLabel]);
           }
         }
         for (const charge of room.charges) {
@@ -1151,8 +1152,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
               [charge.id,roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null]);
             if (!updated.rowCount) throw new Error('A charge does not belong to this room. Reload and try again.');
           } else {
-            await client.query(`INSERT INTO room_charges (room_id,charge_name,amount,currency,charge_basis,mandatory,description,verification_status,data_label) VALUES ($1::uuid,$2,$3,'INR',$4,$5,$6,'unverified','real_submitted')`,
-              [roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null]);
+            await client.query(`INSERT INTO room_charges (room_id,charge_name,amount,currency,charge_basis,mandatory,description,verification_status,data_label) VALUES ($1::uuid,$2,$3,'INR',$4,$5,$6,'unverified',$8)`,
+              [roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null,propertyDataLabel]);
           }
         }
       }
@@ -1312,7 +1313,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
     await client.query('BEGIN');
 
     const property = await client.query(
-      'SELECT id FROM properties WHERE id = $1::uuid FOR UPDATE',
+      'SELECT id, data_label FROM properties WHERE id = $1::uuid FOR UPDATE',
       [propertyId],
     );
 
@@ -1321,6 +1322,8 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
       res.status(404).json({ error: 'Property not found.' });
       return;
     }
+
+    const propertyDataLabel = property.rows[0].data_label === 'real_submitted' ? 'real_submitted' : 'synthetic_demo';
 
     const existing = await client.query(
       `SELECT COUNT(*)::int AS photo_count,
@@ -1363,7 +1366,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
         `INSERT INTO property_images
           (property_id, storage_key, image_url, image_label, alt_text,
            display_order, is_cover, verification_status, data_label)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', 'real_submitted')`,
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', $8)`,
         [
           propertyId,
           image.key,
@@ -1372,6 +1375,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
           image.altText.trim() || null,
           maxOrder + index + 1,
           isCover,
+          propertyDataLabel,
         ],
       );
     }
