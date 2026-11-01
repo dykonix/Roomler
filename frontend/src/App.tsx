@@ -91,7 +91,7 @@ type OfferForm = { amount: string; foodOption: 'included' | 'excluded' | 'unknow
 type RoomForm = { label: string; type: 'single' | 'shared'; maxOccupants: string; totalBeds: string; availableBeds: string; availabilityLastConfirmedAt: string; status: 'available' | 'occupied' | 'reserved' | 'unavailable' | 'unknown'; furnishingStatus: 'furnished' | 'semi_furnished' | 'unfurnished' | ''; attachedBathroom: 'yes' | 'no' | 'unknown'; wifiAvailableInRoom: 'yes' | 'no' | 'unknown'; wifiSpeedMbps: string; notes: string; amenities: AmenityValue[]; offers: OfferForm[]; charges: ChargeForm[] }
 type FloorForm = { number: string; label: string; notes: string; amenities: AmenityValue[]; rooms: RoomForm[] }
 type PropertyFormValues = {
-  title: string; description: string; cityId: string; localityId: string; ownerId: string; propertyType: 'PG' | 'Flat';
+  title: string; description: string; cityId: string; localityId: string; ownerId: string; ownerName: string; ownerPhone: string; ownerEmail: string; propertyType: 'PG' | 'Flat';
   address: string; googleMapsUrl: string; latitude: string; longitude: string; coordinateSource: 'manual' | 'owner_submitted' | 'google_places' | 'openstreetmap' | 'other';
   genderEligibility: 'Boys' | 'Girls' | 'Unisex' | 'unknown'; couplesAllowed: 'yes' | 'no' | 'unknown'; coEdRoomsAllowed: 'yes' | 'no' | 'unknown'; cookingAllowed: 'yes' | 'no' | 'unknown'; houseRulesNotes: string;
   securityDepositBasis: 'two_weeks_rent' | 'one_month_rent' | 'two_months_rent' | 'three_months_rent' | 'four_months_rent' | 'fixed_amount' | 'not_required' | 'unknown'; securityDepositAmount: string; securityDepositRefundPolicy: 'fully_refundable_no_deductions' | 'refundable_with_deductions' | 'unknown'; securityDepositDeductionNotes: string;
@@ -103,7 +103,7 @@ const newCharge = (): ChargeForm => ({ name: '', amount: '', basis: 'monthly', m
 const newOffer = (): OfferForm => ({ amount: '', foodOption: 'unknown', status: 'active' })
 const newRoom = (index = 1): RoomForm => ({ label: `Room ${index}`, type: 'shared', maxOccupants: '2', totalBeds: '2', availableBeds: '', availabilityLastConfirmedAt: '', status: 'unknown', furnishingStatus: '', attachedBathroom: 'unknown', wifiAvailableInRoom: 'unknown', wifiSpeedMbps: '', notes: '', amenities: [], offers: [newOffer()], charges: [] })
 const initialFormValues: PropertyFormValues = {
-  title: '', description: '', cityId: '', localityId: '', ownerId: '', propertyType: 'PG', address: '', googleMapsUrl: '', latitude: '', longitude: '', coordinateSource: 'owner_submitted',
+  title: '', description: '', cityId: '', localityId: '', ownerId: '', ownerName: '', ownerPhone: '', ownerEmail: '', propertyType: 'PG', address: '', googleMapsUrl: '', latitude: '', longitude: '', coordinateSource: 'owner_submitted',
   genderEligibility: 'unknown', couplesAllowed: 'unknown', coEdRoomsAllowed: 'unknown', cookingAllowed: 'unknown', houseRulesNotes: '',
   securityDepositBasis: 'unknown', securityDepositAmount: '', securityDepositRefundPolicy: 'unknown', securityDepositDeductionNotes: '', noticePeriodMonths: '',
   electricityBillingMode: 'unknown', electricityRatePerUnit: '', fourWheelerParkingSpaces: '', twoWheelerParkingSpaces: '',
@@ -388,8 +388,8 @@ function App() {
   async function submitProperty(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setFormError('')
-    if (!formValues.title.trim() || !formValues.cityId || !formValues.ownerId) {
-      setFormError('Enter a title and select a city and owner.')
+    if (!formValues.title.trim() || !formValues.cityId || !formValues.ownerName.trim() || (!formValues.ownerPhone.trim() && !formValues.ownerEmail.trim())) {
+      setFormError('Enter a title, select a city, provide the real owner name, and provide a phone number or email.')
       setReviewMode(false)
       return
     }
@@ -434,7 +434,8 @@ function App() {
     const toNullableBoolean = (value: string) => value === 'unknown' ? null : value === 'yes'
     const payload = {
       title: formValues.title.trim(), description: formValues.description.trim(), propertyType: formValues.propertyType,
-      cityId: formValues.cityId, localityId: formValues.localityId || null, ownerId: formValues.ownerId,
+      cityId: formValues.cityId, localityId: formValues.localityId || null,
+      ownerName: formValues.ownerName.trim(), ownerPhone: formValues.ownerPhone.trim() || null, ownerEmail: formValues.ownerEmail.trim() || null,
       address: formValues.address.trim() || null, googleMapsUrl: formValues.googleMapsUrl.trim() || null,
       latitude: parseOptionalNumber(formValues.latitude), longitude: parseOptionalNumber(formValues.longitude),
       coordinateSource: formValues.latitude.trim() && formValues.longitude.trim() ? formValues.coordinateSource : null,
@@ -1253,7 +1254,7 @@ function App() {
           <section className="modal property-modal" role="dialog" aria-modal="true" aria-labelledby="add-property-title">
             <div className="modal-heading"><div><div className="eyebrow">PROPERTY WORKFLOW · {reviewMode ? 'FINAL REVIEW' : 'DRAFT ENTRY'}</div><h2 id="add-property-title">{reviewMode ? 'Review property' : 'Add a property'}</h2></div>
               <button className="modal-close" type="button" disabled={savingProperty} onClick={() => setShowAddForm(false)} aria-label="Close dialog">×</button></div>
-            <div className="modal-notice">Demo workflow: records are saved as synthetic drafts and marked unverified. Unknown means not provided; it does not mean No.</div>
+            <div className="modal-notice">Staging test entry: new properties and their owner/contact details are saved as real-submitted records, as drafts and unverified. Enter actual owner details only. Unknown means not provided; it does not mean No.</div>
             {formLoading ? <p>Loading cities, localities and owners…</p> : (
               <form onSubmit={submitProperty}>
                 {!reviewMode ? <>
@@ -1265,7 +1266,9 @@ function App() {
                     <label className="form-field">Property type<select value={formValues.propertyType} onChange={e => setFormValues({ ...formValues, propertyType: e.target.value as 'PG' | 'Flat' })}><option value="PG">PG</option><option value="Flat">Flat</option></select></label>
                   </div>
                   <div className="form-row"><label className="form-field">Locality<select value={formValues.localityId} disabled={!formValues.cityId} onChange={e => setFormValues({ ...formValues, localityId: e.target.value })}><option value="">Unknown / not specified</option>{formOptions.localities.filter(l => l.city_id === formValues.cityId).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
-                    <label className="form-field">Owner *<select required value={formValues.ownerId} onChange={e => setFormValues({ ...formValues, ownerId: e.target.value })}><option value="">Select owner</option>{formOptions.owners.map(owner => <option key={owner.id} value={owner.id}>{owner.name} — {owner.data_label.replaceAll('_', ' ')}</option>)}</select>{formValues.ownerId && <span className="field-hint">Contact: {[formOptions.owners.find(o => o.id === formValues.ownerId)?.contact_phone, formOptions.owners.find(o => o.id === formValues.ownerId)?.contact_email].filter(Boolean).join(' · ') || 'No contact details on record'}</span>}</label></div>
+                    <label className="form-field">Owner / contact name *<input required minLength={2} maxLength={150} value={formValues.ownerName} onChange={e => setFormValues({ ...formValues, ownerName: e.target.value })} placeholder="Actual property owner or authorized contact" /></label></div>
+                  <div className="form-row"><label className="form-field">Owner phone<input type="tel" maxLength={40} value={formValues.ownerPhone} onChange={e => setFormValues({ ...formValues, ownerPhone: e.target.value })} placeholder="Phone number" /></label><label className="form-field">Owner email<input type="email" maxLength={254} value={formValues.ownerEmail} onChange={e => setFormValues({ ...formValues, ownerEmail: e.target.value })} placeholder="Email address" /></label></div>
+                  <p className="field-hint">Provide at least one contact method. Demo owners are not used for new entries.</p>
                   <label className="form-field">Street address (optional)<input maxLength={500} value={formValues.address} onChange={e => setFormValues({ ...formValues, address: e.target.value })} placeholder="Address supplied by owner" /></label>
                   <label className="form-field">Google Maps URL (optional)<input type="url" value={formValues.googleMapsUrl} onChange={e => setFormValues({ ...formValues, googleMapsUrl: e.target.value })} placeholder="https://maps.google.com/…" /></label>
                   <div className="form-row"><label className="form-field">Latitude<input type="number" step="any" min="-90" max="90" value={formValues.latitude} onChange={e => setFormValues({ ...formValues, latitude: e.target.value })} placeholder="Optional" /></label><label className="form-field">Longitude<input type="number" step="any" min="-180" max="180" value={formValues.longitude} onChange={e => setFormValues({ ...formValues, longitude: e.target.value })} placeholder="Optional" /></label></div>
