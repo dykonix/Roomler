@@ -187,9 +187,9 @@ app.get('/api/admin/form-options', async (_req, res) => {
         ORDER BY c.canonical_name, l.canonical_name
       `),
       pool.query(`
-        SELECT id, display_name AS name, data_label
+        SELECT id, display_name AS name, contact_phone, contact_email, data_label
         FROM owners
-        WHERE owner_status = 'active'
+        WHERE owner_status = 'active' AND data_label = 'real_submitted'
         ORDER BY display_name
       `),
       pool.query(`
@@ -233,7 +233,8 @@ app.post('/api/admin/properties', async (req, res) => {
 
   const body = req.body as Record<string, unknown>;
   const {
-    title, description = '', propertyType, cityId, localityId, ownerId,
+    title, description = '', propertyType, cityId, localityId, ownerId = null,
+    ownerName, ownerPhone = null, ownerEmail = null,
     address = null, googleMapsUrl = null, latitude = null, longitude = null,
     coordinateSource = null, genderEligibility = null, couplesAllowed = null,
     coEdRoomsAllowed = null, cookingAllowed = null, houseRulesNotes = null,
@@ -248,7 +249,12 @@ app.post('/api/admin/properties', async (req, res) => {
   const fail = (message: string) => { res.status(400).json({ error: message }); };
   if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 150) return fail('Title must contain 3 to 150 characters.');
   if (propertyType !== 'PG' && propertyType !== 'Flat') return fail('Property type must be PG or Flat.');
-  if (typeof cityId !== 'string' || typeof ownerId !== 'string') return fail('A city and owner are required.');
+  if (typeof cityId !== 'string') return fail('A city is required.');
+  if (ownerId != null && typeof ownerId !== 'string') return fail('Owner ID must be valid when supplied.');
+  if (ownerId == null && (typeof ownerName !== 'string' || ownerName.trim().length < 2 || ownerName.trim().length > 150)) return fail('Enter the real owner/contact name.');
+  if (ownerId == null && ((typeof ownerPhone !== 'string' || !ownerPhone.trim()) && (typeof ownerEmail !== 'string' || !ownerEmail.trim()))) return fail('Provide a phone number or email for the owner/contact.');
+  if (ownerPhone != null && (typeof ownerPhone !== 'string' || ownerPhone.length > 40)) return fail('Owner phone must be text of at most 40 characters.');
+  if (ownerEmail != null && (typeof ownerEmail !== 'string' || ownerEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail))) return fail('Enter a valid owner email address.');
   if (localityId != null && typeof localityId !== 'string') return fail('Locality must be a valid ID or left unspecified.');
   if (typeof description !== 'string' || description.length > 10000) return fail('Description must be text with at most 10,000 characters.');
   if (genderEligibility != null && !['Boys', 'Girls', 'Unisex'].includes(String(genderEligibility))) return fail('Choose a supported occupancy eligibility value or leave it unknown.');
@@ -365,13 +371,25 @@ app.post('/api/admin/properties', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    let resolvedOwnerId: string;
+    if (typeof ownerId === 'string') {
+      const existingOwner = await client.query(`SELECT id FROM owners WHERE id = $1::uuid AND owner_status = 'active' AND data_label = 'real_submitted'`, [ownerId]);
+      if (existingOwner.rowCount !== 1) throw new Error('Selected owner must be an active real owner, not a demo owner.');
+      resolvedOwnerId = existingOwner.rows[0].id;
+    } else {
+      const createdOwner = await client.query(`
+        INSERT INTO owners (display_name, contact_phone, contact_email, owner_status, data_label)
+        VALUES ($1,$2,$3,'active','real_submitted') RETURNING id
+      `, [typeof ownerName === 'string' ? ownerName.trim() : '', typeof ownerPhone === 'string' && ownerPhone.trim() ? ownerPhone.trim() : null,
+          typeof ownerEmail === 'string' && ownerEmail.trim() ? ownerEmail.trim() : null]);
+      resolvedOwnerId = createdOwner.rows[0].id;
+    }
     const referenceCheck = await client.query(`
-      SELECT c.id AS city_id, o.id AS owner_id, o.data_label AS owner_data_label, l.id AS locality_id
-      FROM cities c CROSS JOIN owners o
-      LEFT JOIN localities l ON l.id = $3::uuid AND l.city_id = c.id
-      WHERE c.id = $1::uuid AND c.is_active = TRUE AND o.id = $2::uuid AND o.owner_status = 'active'
-    `, [cityId, ownerId, localityId ?? null]);
-    if (referenceCheck.rowCount !== 1) throw new Error('Selected city or active owner is invalid.');
+      SELECT c.id AS city_id, l.id AS locality_id
+      FROM cities c LEFT JOIN localities l ON l.id = $2::uuid AND l.city_id = c.id
+      WHERE c.id = $1::uuid AND c.is_active = TRUE
+    `, [cityId, localityId ?? null]);
+    if (referenceCheck.rowCount !== 1) throw new Error('Selected city is invalid.');
     if (localityId && referenceCheck.rows[0].locality_id !== localityId) throw new Error('Selected locality does not belong to the selected city.');
 
     const propertyResult = await client.query(`
@@ -387,9 +405,9 @@ app.post('/api/admin/properties', async (req, res) => {
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
         $21, CASE WHEN $21::numeric IS NULL THEN NULL ELSE 'months' END,
-        $22,$23,$24,$25,TRUE,'draft','admin_entered','unverified','synthetic_demo'
+        $22,$23,$24,$25,TRUE,'draft','admin_entered','unverified','real_submitted'
       ) RETURNING id, title, listing_status, data_label
-    `, [ownerId, title.trim(), description.trim(), propertyType, cityId, localityId ?? null,
+    `, [resolvedOwnerId, title.trim(), description.trim(), propertyType, cityId, localityId ?? null,
       typeof address === 'string' && address.trim() ? address.trim() : null,
       latitude, longitude, coordinateSource, typeof googleMapsUrl === 'string' && googleMapsUrl.trim() ? googleMapsUrl.trim() : null,
       genderEligibility, couplesAllowed, coEdRoomsAllowed, cookingAllowed,
@@ -415,7 +433,7 @@ app.post('/api/admin/properties', async (req, res) => {
     for (const floor of normalizedFloors) {
       const floorResult = await client.query(`
         INSERT INTO property_floors (property_id, floor_number, floor_label, notes, data_label)
-        VALUES ($1,$2,$3,$4,'synthetic_demo') RETURNING id
+        VALUES ($1,$2,$3,$4,'real_submitted') RETURNING id
       `, [propertyId, floor.number, floor.label.trim(), floor.notes?.trim() || null]);
       const floorId: string = floorResult.rows[0].id;
       await persistAmenities('floor', floorId, floor.amenities ?? []);
@@ -423,7 +441,7 @@ app.post('/api/admin/properties', async (req, res) => {
         const roomResult = await client.query(`
           INSERT INTO rooms (floor_id, room_label, room_type, max_occupants, furnishing_status,
             room_status, attached_bathroom, wifi_available_in_room, wifi_speed_mbps, notes, availability_last_confirmed_at, data_label)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'synthetic_demo') RETURNING id
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'real_submitted') RETURNING id
         `, [floorId, room.label.trim(), room.type, room.maxOccupants, room.furnishingStatus ?? null,
           room.status ?? 'unknown', room.attachedBathroom ?? null, room.wifiAvailableInRoom ?? null,
           room.wifiSpeedMbps ?? null, room.notes?.trim() || null, room.availabilityLastConfirmedAt ?? null]);
@@ -432,19 +450,19 @@ app.post('/api/admin/properties', async (req, res) => {
         const beds = Array.isArray(room.beds) ? room.beds : [];
         for (const [index, bed] of beds.entries()) {
           await client.query(`INSERT INTO beds (room_id, bed_label, bed_type, bed_status, availability_last_confirmed_at, data_label)
-            VALUES ($1,$2,$3,$4,$5,'synthetic_demo')`, [roomId, bed.label.trim(), bed.type ?? 'single', bed.status ?? 'unknown', room.availabilityLastConfirmedAt ?? null]);
+            VALUES ($1,$2,$3,$4,$5,'real_submitted')`, [roomId, bed.label.trim(), bed.type ?? 'single', bed.status ?? 'unknown', room.availabilityLastConfirmedAt ?? null]);
         }
         for (const offer of room.offers ?? []) {
           const expectedBasis = room.type === 'shared' ? 'per_bed' : 'per_room';
           await client.query(`INSERT INTO room_prices (room_id, rent_basis, stay_period, amount, currency,
             valid_from, is_current, data_label, food_option, offer_status)
-            VALUES ($1,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,'synthetic_demo',$4,$5)`,
+            VALUES ($1,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,'real_submitted',$4,$5)`,
           [roomId, expectedBasis, offer.amount, offer.foodOption ?? 'unknown', offer.status ?? 'unknown']);
         }
         for (const charge of room.charges ?? []) {
           await client.query(`INSERT INTO room_charges (room_id, charge_name, amount, currency, charge_basis,
             mandatory, description, verification_status, data_label)
-            VALUES ($1,$2,$3,'INR',$4,$5,$6,'unverified','synthetic_demo')`,
+            VALUES ($1,$2,$3,'INR',$4,$5,$6,'unverified','real_submitted')`,
           [roomId, charge.name.trim(), charge.amount, charge.basis, charge.mandatory, charge.description?.trim() || null]);
         }
       }
@@ -453,7 +471,7 @@ app.post('/api/admin/properties', async (req, res) => {
     for (const image of imageList) {
       await client.query(`INSERT INTO property_images (property_id, storage_key, image_url, image_label, alt_text,
         display_order, is_cover, verification_status, data_label)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,'unverified','synthetic_demo')`,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'unverified','real_submitted')`,
       [propertyId, image.key ?? null, image.url.trim(), image.label ?? 'other', image.altText?.trim() ?? '',
         image.displayOrder ?? 0, image.isCover ?? false]);
     }
@@ -514,10 +532,8 @@ app.get('/api/public/locations', async (_req, res) => {
  * are available only in development with ?includeDemo=true and remain labelled.
  */
 app.get('/api/public/properties', async (req, res) => {
-  const allowSyntheticDemo =
-      process.env.NODE_ENV !== 'production' ||
-      (process.env.ROOMLER_ENV === 'staging' &&
-       process.env.ALLOW_SYNTHETIC_DEMO === 'true');
+  // Staging should exercise real-submitted listings only. Synthetic seed records remain available in development.
+  const allowSyntheticDemo = process.env.NODE_ENV !== 'production';
     const includeDemo = allowSyntheticDemo && req.query.includeDemo === 'true';
   const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
   const locality = typeof req.query.locality === 'string' ? req.query.locality.trim() : '';
@@ -598,10 +614,8 @@ app.get('/api/public/properties/:id', async (req, res) => {
     return;
   }
   try {
-    const allowSyntheticDemo =
-      process.env.NODE_ENV !== 'production' ||
-      (process.env.ROOMLER_ENV === 'staging' &&
-       process.env.ALLOW_SYNTHETIC_DEMO === 'true');
+    // Staging should exercise real-submitted listings only. Synthetic seed records remain available in development.
+  const allowSyntheticDemo = process.env.NODE_ENV !== 'production';
     const includeDemo = allowSyntheticDemo && req.query.includeDemo === 'true';
     const result = await pool.query(`
       SELECT p.id, p.title, p.description, p.property_type, p.address, p.google_maps_url,
@@ -1073,8 +1087,9 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const exists = await client.query('SELECT id FROM properties WHERE id=$1::uuid FOR UPDATE', [propertyId]);
+    const exists = await client.query('SELECT id, data_label FROM properties WHERE id=$1::uuid FOR UPDATE', [propertyId]);
     if (!exists.rowCount) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Property not found.' }); return; }
+    const propertyDataLabel = exists.rows[0].data_label === 'real_submitted' ? 'real_submitted' : 'synthetic_demo';
 
     const saveAmenities = async (table: 'property_attribute_values'|'floor_attribute_values'|'room_attribute_values',
       idColumn: 'property_id'|'floor_id'|'room_id', entityId: string, items: any[]) => {
@@ -1100,8 +1115,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
           [floorId,propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
         if (!updated.rowCount) throw new Error('A floor does not belong to this property. Reload the form and try again.');
       } else {
-        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,'synthetic_demo') RETURNING id`,
-          [propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null]);
+        const inserted = await client.query(`INSERT INTO property_floors (property_id,floor_number,floor_label,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5) RETURNING id`,
+          [propertyId,Number(floor.number),floor.label.trim(),typeof floor.notes==='string' ? floor.notes.trim() || null : null,propertyDataLabel]);
         floorId=inserted.rows[0].id;
       }
       savedFloors++;
@@ -1113,8 +1128,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
             [roomId,floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null,propertyId]);
           if (!updated.rowCount) throw new Error('A room does not belong to this property. Reload the form and try again.');
         } else {
-          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,'synthetic_demo') RETURNING id`,
-            [floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null]);
+          const inserted = await client.query(`INSERT INTO rooms (floor_id,room_label,room_type,max_occupants,furnishing_status,room_status,attached_bathroom,wifi_available_in_room,notes,data_label) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+            [floorId,room.label.trim(),room.type,Number(room.maxOccupants),room.furnishingStatus || null,room.status,room.attachedBathroom ?? null,room.wifiAvailableInRoom ?? null,typeof room.notes==='string' ? room.notes.trim() || null : null,propertyDataLabel]);
           roomId=inserted.rows[0].id;
         }
         savedRooms++;
@@ -1127,8 +1142,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
               [offer.id,roomId,Number(offer.amount),offer.rentBasis ?? expected,offer.foodOption,offer.status]);
             if (!updated.rowCount) throw new Error('A rent offer does not belong to this room. Reload and try again.');
           } else {
-            await client.query(`INSERT INTO room_prices (room_id,rent_basis,stay_period,amount,currency,valid_from,is_current,data_label,food_option,offer_status) VALUES ($1::uuid,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,'synthetic_demo',$4,$5)`,
-              [roomId,offer.rentBasis ?? expected,Number(offer.amount),offer.foodOption,offer.status]);
+            await client.query(`INSERT INTO room_prices (room_id,rent_basis,stay_period,amount,currency,valid_from,is_current,data_label,food_option,offer_status) VALUES ($1::uuid,$2,'monthly',$3,'INR',CURRENT_DATE,TRUE,$6,$4,$5)`,
+              [roomId,offer.rentBasis ?? expected,Number(offer.amount),offer.foodOption,offer.status,propertyDataLabel]);
           }
         }
         for (const charge of room.charges) {
@@ -1137,8 +1152,8 @@ app.patch('/api/admin/properties/:id/inventory', async (req, res) => {
               [charge.id,roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null]);
             if (!updated.rowCount) throw new Error('A charge does not belong to this room. Reload and try again.');
           } else {
-            await client.query(`INSERT INTO room_charges (room_id,charge_name,amount,currency,charge_basis,mandatory,description,verification_status,data_label) VALUES ($1::uuid,$2,$3,'INR',$4,$5,$6,'unverified','synthetic_demo')`,
-              [roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null]);
+            await client.query(`INSERT INTO room_charges (room_id,charge_name,amount,currency,charge_basis,mandatory,description,verification_status,data_label) VALUES ($1::uuid,$2,$3,'INR',$4,$5,$6,'unverified',$8)`,
+              [roomId,charge.name.trim(),Number(charge.amount),charge.basis,charge.mandatory,typeof charge.description==='string' ? charge.description.trim() || null : null,propertyDataLabel]);
           }
         }
       }
@@ -1298,7 +1313,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
     await client.query('BEGIN');
 
     const property = await client.query(
-      'SELECT id FROM properties WHERE id = $1::uuid FOR UPDATE',
+      'SELECT id, data_label FROM properties WHERE id = $1::uuid FOR UPDATE',
       [propertyId],
     );
 
@@ -1307,6 +1322,8 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
       res.status(404).json({ error: 'Property not found.' });
       return;
     }
+
+    const propertyDataLabel = property.rows[0].data_label === 'real_submitted' ? 'real_submitted' : 'synthetic_demo';
 
     const existing = await client.query(
       `SELECT COUNT(*)::int AS photo_count,
@@ -1349,7 +1366,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
         `INSERT INTO property_images
           (property_id, storage_key, image_url, image_label, alt_text,
            display_order, is_cover, verification_status, data_label)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', 'synthetic_demo')`,
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'unverified', $8)`,
         [
           propertyId,
           image.key,
@@ -1358,6 +1375,7 @@ app.post('/api/admin/properties/:id/media', async (req, res) => {
           image.altText.trim() || null,
           maxOrder + index + 1,
           isCover,
+          propertyDataLabel,
         ],
       );
     }
